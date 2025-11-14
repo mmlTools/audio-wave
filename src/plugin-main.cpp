@@ -1,5 +1,5 @@
 #include <obs-module.h>
-#include "config.hpp" // PLUGIN_NAME, PLUGIN_VERSION from your configured header
+#include "config.hpp" 
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
@@ -12,7 +12,7 @@ bool obs_module_load(void)
 	     "[%s] plugin loaded successfully (version %s)",
 	     PLUGIN_NAME, PLUGIN_VERSION);
 
-	register_audio_wave_source(); // from audio_wave.cpp
+	register_audio_wave_source();
 
 	return true;
 }

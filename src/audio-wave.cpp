@@ -21,10 +21,6 @@
 #define BLOG(log_level, format, ...) \
 	blog(log_level, "[audio-wave] " format, ##__VA_ARGS__)
 
-// -----------------------------------------------------------------------------
-// Constants / forward declarations
-// -----------------------------------------------------------------------------
-
 static const char *kSourceId   = "audio_wave_source";
 static const char *kSourceName = "Audio Wave (Simple)";
 
@@ -34,16 +30,14 @@ static const char *SETTING_COLOR2           = "wave_color2";
 static const char *SETTING_GRADIENT_ENABLE  = "use_gradient";
 static const char *SETTING_WIDTH            = "width";
 static const char *SETTING_HEIGHT           = "height";
-static const char *SETTING_MODE             = "draw_mode";   // 0 = Wave, 1 = Bars
-static const char *SETTING_AMPLITUDE        = "amplitude";   // percent (10..400)
-static const char *SETTING_MIRROR           = "mirror_wave"; // bool
+static const char *SETTING_MODE             = "draw_mode";  
+static const char *SETTING_AMPLITUDE        = "amplitude";  
+static const char *SETTING_MIRROR           = "mirror_wave";
 
 struct audio_wave_source;
 
-// Single global source info; we fill it in register_audio_wave_source()
 static struct obs_source_info audio_wave_source_info;
 
-// Forward declarations of callbacks
 static void *audio_wave_create(obs_data_t *settings, obs_source_t *source);
 static void  audio_wave_destroy(void *data);
 static void  audio_wave_update(void *data, obs_data_t *settings);
@@ -55,45 +49,32 @@ static uint32_t audio_wave_get_width(void *data);
 static uint32_t audio_wave_get_height(void *data);
 static void  audio_wave_video_render(void *data, gs_effect_t *effect);
 
-// gradient visibility callback (OBS 32 signature)
 static bool gradient_modified(obs_properties_t *props,
                               obs_property_t *p,
                               obs_data_t *settings);
 
-// -----------------------------------------------------------------------------
-// Per-instance data
-// -----------------------------------------------------------------------------
-
 struct audio_wave_source {
 	obs_source_t *self = nullptr;
 
-	// Settings
 	std::string audio_source_name;
-	uint32_t color  = 0xFFFFFF; // OBS color props are 0x00BBGGRR (BGR)
-	uint32_t color2 = 0x00FF00; // second color for gradient
+	uint32_t color  = 0xFFFFFF; 
+	uint32_t color2 = 0x00FF00; 
 	int width       = 800;
 	int height      = 200;
-	int mode        = 0;        // 0 = wave, 1 = bars
+	int mode        = 0;        
 	bool use_gradient = false;
-	float gain      = 2.0f;     // amplitude multiplier
-	bool mirror     = false;    // mirror wave below mid-line
+	float gain      = 2.0f;     
+	bool mirror     = false;    
 
-	// Weak ref to selected audio source
 	obs_weak_source_t *audio_weak = nullptr;
 
-	// Audio data
 	std::mutex audio_mutex;
 	std::vector<float> samples_left;
 	std::vector<float> samples_right;
 	size_t num_samples = 0;
 
-	// Render buffer: mono wave [0..1]
 	std::vector<float> wave;
 };
-
-// -----------------------------------------------------------------------------
-// Helpers: weak ref management
-// -----------------------------------------------------------------------------
 
 static void release_audio_weak(audio_wave_source *s)
 {
@@ -106,17 +87,14 @@ static void release_audio_weak(audio_wave_source *s)
 
 static void attach_to_audio_source(audio_wave_source *s);
 
-// Enumerate sources to fill property list
 static bool enum_audio_sources(void *data, obs_source_t *source)
 {
 	obs_property_t *prop = (obs_property_t *)data;
 
-	// Skip our own source type
 	const char *id = obs_source_get_id(source);
 	if (id && std::strcmp(id, kSourceId) == 0)
 		return true;
 
-	// Only list sources that actually have audio
 	if (!obs_source_audio_active(source))
 		return true;
 
@@ -127,10 +105,6 @@ static bool enum_audio_sources(void *data, obs_source_t *source)
 	obs_property_list_add_string(prop, name, name);
 	return true;
 }
-
-// -----------------------------------------------------------------------------
-// Audio capture callback
-// -----------------------------------------------------------------------------
 
 static void audio_capture_cb(void *param, obs_source_t *, const struct audio_data *audio,
                              bool muted)
@@ -180,7 +154,6 @@ static void audio_capture_cb(void *param, obs_source_t *, const struct audio_dat
 	}
 }
 
-// (Re)attach callback to selected audio source
 static void attach_to_audio_source(audio_wave_source *s)
 {
 	if (!s)
@@ -207,7 +180,6 @@ static void attach_to_audio_source(audio_wave_source *s)
 	     s->audio_source_name.c_str());
 }
 
-// Detach callback
 static void detach_from_audio_source(audio_wave_source *s)
 {
 	if (!s || !s->audio_weak)
@@ -221,10 +193,6 @@ static void detach_from_audio_source(audio_wave_source *s)
 
 	release_audio_weak(s);
 }
-
-// -----------------------------------------------------------------------------
-// Settings / properties
-// -----------------------------------------------------------------------------
 
 static bool gradient_modified(obs_properties_t *props,
                               obs_property_t *p,
@@ -246,20 +214,17 @@ static obs_properties_t *audio_wave_get_properties(void *data)
 
 	obs_properties_t *props = obs_properties_create();
 
-	// Audio source selector
 	obs_property_t *p_list = obs_properties_add_list(
 		props, SETTING_AUDIO_SOURCE, "Audio Source",
 		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	obs_enum_sources(enum_audio_sources, p_list);
 
-	// Display mode: Wave or Bars
 	obs_property_t *mode =
 		obs_properties_add_list(props, SETTING_MODE, "Display Mode",
 		                        OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(mode, "Wave", 0);
 	obs_property_list_add_int(mode, "Bars", 1);
 
-	// Color & gradient controls
 	obs_property_t *grad =
 		obs_properties_add_bool(props, SETTING_GRADIENT_ENABLE, "Use Gradient");
 	obs_property_set_modified_callback(grad, gradient_modified);
@@ -268,18 +233,14 @@ static obs_properties_t *audio_wave_get_properties(void *data)
 	obs_property_t *c2 =
 		obs_properties_add_color(props, SETTING_COLOR2, "Wave Color 2");
 
-	// Initially hide color2 until gradient is enabled
 	obs_property_set_visible(c2, false);
 
-	// Dimensions
 	obs_properties_add_int(props, SETTING_WIDTH,  "Width",  64, 4096, 1);
 	obs_properties_add_int(props, SETTING_HEIGHT, "Height", 32, 2048, 1);
 
-	// Amplitude (percentage)
 	obs_properties_add_int_slider(props, SETTING_AMPLITUDE,
 	                              "Amplitude (%)", 10, 400, 10);
 
-	// Mirror setting
 	obs_properties_add_bool(props, SETTING_MIRROR,
 	                        "Mirror wave horizontally");
 
@@ -294,8 +255,8 @@ static void audio_wave_get_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, SETTING_COLOR, 0xFFFFFF);
 	obs_data_set_default_int(settings, SETTING_COLOR2, 0x00FF00);
 	obs_data_set_default_bool(settings, SETTING_GRADIENT_ENABLE, false);
-	obs_data_set_default_int(settings, SETTING_MODE, 0);        // Wave
-	obs_data_set_default_int(settings, SETTING_AMPLITUDE, 200); // 200% (gain=2.0)
+	obs_data_set_default_int(settings, SETTING_MODE, 0);        
+	obs_data_set_default_int(settings, SETTING_AMPLITUDE, 200); 
 	obs_data_set_default_bool(settings, SETTING_MIRROR, false);
 }
 
@@ -305,7 +266,6 @@ static void audio_wave_update(void *data, obs_data_t *settings)
 	if (!s)
 		return;
 
-	// Detach from old audio source
 	detach_from_audio_source(s);
 
 	s->audio_source_name = obs_data_get_string(settings, SETTING_AUDIO_SOURCE);
@@ -328,20 +288,14 @@ static void audio_wave_update(void *data, obs_data_t *settings)
 	if (s->height < 1)
 		s->height = 1;
 
-	// Try to attach immediately with new settings
 	attach_to_audio_source(s);
 }
-
-// -----------------------------------------------------------------------------
-// Lifecycle
-// -----------------------------------------------------------------------------
 
 static void *audio_wave_create(obs_data_t *settings, obs_source_t *source)
 {
 	auto *s = new audio_wave_source{};
 	s->self = source;
 
-	// Use whatever settings OBS gives us (defaults already applied by OBS)
 	audio_wave_update(s, settings);
 
 	BLOG(LOG_INFO, "Created Audio Wave source");
@@ -359,7 +313,6 @@ static void audio_wave_destroy(void *data)
 	delete s;
 }
 
-// When the scene/source becomes visible, try to (re)attach.
 static void audio_wave_show(void *data)
 {
 	auto *s = static_cast<audio_wave_source *>(data);
@@ -370,7 +323,6 @@ static void audio_wave_show(void *data)
 	attach_to_audio_source(s);
 }
 
-// When hidden, detach.
 static void audio_wave_hide(void *data)
 {
 	auto *s = static_cast<audio_wave_source *>(data);
@@ -379,10 +331,6 @@ static void audio_wave_hide(void *data)
 
 	detach_from_audio_source(s);
 }
-
-// -----------------------------------------------------------------------------
-// Video sizing
-// -----------------------------------------------------------------------------
 
 static uint32_t audio_wave_get_width(void *data)
 {
@@ -395,10 +343,6 @@ static uint32_t audio_wave_get_height(void *data)
 	auto *s = static_cast<audio_wave_source *>(data);
 	return s ? (uint32_t)s->height : 0;
 }
-
-// -----------------------------------------------------------------------------
-// Wave building & rendering
-// -----------------------------------------------------------------------------
 
 static void build_wave(audio_wave_source *s)
 {
@@ -424,11 +368,10 @@ static void build_wave(audio_wave_source *s)
 		float m = s->gain * 0.5f * (std::fabs(l) + std::fabs(r));
 		if (m > 1.0f)
 			m = 1.0f;
-		s->wave[i] = m; // 0..1
+		s->wave[i] = m;
 	}
 }
 
-// OBS color properties are stored as 0x00BBGGRR (BGR).
 static void set_solid_color(gs_eparam_t *param, uint32_t color)
 {
 	if (!param)
@@ -447,7 +390,6 @@ static void set_solid_color(gs_eparam_t *param, uint32_t color)
 	gs_effect_set_vec4(param, &c);
 }
 
-// Simple lerp between two OBS color values (0x00BBGGRR)
 static uint32_t lerp_color(uint32_t c1, uint32_t c2, float t)
 {
 	if (t < 0.0f) t = 0.0f;
@@ -481,11 +423,7 @@ static void draw_wave(audio_wave_source *s, gs_eparam_t *color_param)
 	const float mid_y = h * 0.5f;
 
 	gs_matrix_push();
-	// Keep OBS's transform for this source
-
-	// ---------------------------------------------------------
-	// No audio yet – draw flat line (optionally gradient)
-	// ---------------------------------------------------------
+	
 	if (frames < 2) {
 		if (!s->use_gradient) {
 			if (color_param)
@@ -496,12 +434,8 @@ static void draw_wave(audio_wave_source *s, gs_eparam_t *color_param)
 				gs_vertex2f((float)x, mid_y);
 			gs_render_stop(GS_LINESTRIP);
 
-			if (s->mirror) {
-				// Line is on mid_y already; mirrored line would overlap,
-				// so nothing extra needed visually.
-			}
+			if (s->mirror) {}
 		} else {
-			// Gradient across width
 			for (uint32_t x = 0; x + 1 < (uint32_t)w; x += 2) {
 				float t = w > 1.0f ? (float)x / (w - 1.0f) : 0.0f;
 				if (color_param)
@@ -512,9 +446,7 @@ static void draw_wave(audio_wave_source *s, gs_eparam_t *color_param)
 				gs_vertex2f((float)(x + 1), mid_y);
 				gs_render_stop(GS_LINES);
 
-				if (s->mirror) {
-					// Same story: flat line, mirrored overlaps.
-				}
+				if (s->mirror) {}
 			}
 		}
 
@@ -522,16 +454,11 @@ static void draw_wave(audio_wave_source *s, gs_eparam_t *color_param)
 		return;
 	}
 
-	// ---------------------------------------------------------
-	// Solid (non-gradient) modes
-	// ---------------------------------------------------------
 	if (!s->use_gradient) {
 		if (color_param)
 			set_solid_color(color_param, s->color);
 
 		if (s->mode == 0) {
-			// Wave - continuous line
-			// Top line
 			gs_render_start(true);
 			for (uint32_t x = 0; x < (uint32_t)w; ++x) {
 				const size_t idx =
@@ -543,7 +470,6 @@ static void draw_wave(audio_wave_source *s, gs_eparam_t *color_param)
 			}
 			gs_render_stop(GS_LINESTRIP);
 
-			// Mirrored line (bottom)
 			if (s->mirror) {
 				gs_render_start(true);
 				for (uint32_t x = 0; x < (uint32_t)w; ++x) {
@@ -558,7 +484,6 @@ static void draw_wave(audio_wave_source *s, gs_eparam_t *color_param)
 				gs_render_stop(GS_LINESTRIP);
 			}
 		} else {
-			// Bars
 			const uint32_t step = 3;
 			gs_render_start(true);
 			for (uint32_t x = 0; x < (uint32_t)w; x += step) {
@@ -568,11 +493,9 @@ static void draw_wave(audio_wave_source *s, gs_eparam_t *color_param)
 				const float v = s->wave[idx];
 				const float y = mid_y - v * (mid_y - 4.0f);
 
-				// Top bar
 				gs_vertex2f((float)x, mid_y);
 				gs_vertex2f((float)x, y);
 
-				// Mirrored bar
 				if (s->mirror) {
 					const float y_m = mid_y + (mid_y - y);
 					gs_vertex2f((float)x, mid_y);
@@ -582,11 +505,7 @@ static void draw_wave(audio_wave_source *s, gs_eparam_t *color_param)
 			gs_render_stop(GS_LINES);
 		}
 	} else {
-		// ---------------------------------------------------------
-		// Gradient modes
-		// ---------------------------------------------------------
 		if (s->mode == 0) {
-			// Wave gradient: segment-by-segment
 			float prev_x = 0.0f;
 			float prev_y = mid_y;
 
@@ -608,13 +527,11 @@ static void draw_wave(audio_wave_source *s, gs_eparam_t *color_param)
 				if (color_param)
 					set_solid_color(color_param, lerp_color(s->color, s->color2, t));
 
-				// Top segment
 				gs_render_start(true);
 				gs_vertex2f(prev_x, prev_y);
 				gs_vertex2f((float)x, y_cur);
 				gs_render_stop(GS_LINES);
 
-				// Mirrored segment
 				if (s->mirror) {
 					const float y_prev_m = mid_y + (mid_y - y_prev);
 					const float y_cur_m  = mid_y + (mid_y - y_cur);
@@ -629,7 +546,6 @@ static void draw_wave(audio_wave_source *s, gs_eparam_t *color_param)
 				prev_y = y_cur;
 			}
 		} else {
-			// Bars gradient: each bar has its own color
 			const uint32_t step = 3;
 			for (uint32_t x = 0; x < (uint32_t)w; x += step) {
 				const size_t idx =
@@ -643,7 +559,6 @@ static void draw_wave(audio_wave_source *s, gs_eparam_t *color_param)
 					set_solid_color(color_param, lerp_color(s->color, s->color2, t));
 
 				gs_render_start(true);
-				// Top bar
 				gs_vertex2f((float)x, mid_y);
 				gs_vertex2f((float)x, y);
 
@@ -668,7 +583,6 @@ static void audio_wave_video_render(void *data, gs_effect_t *effect)
 	if (!s)
 		return;
 
-	// Use SOLID base effect (no textures)
 	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 	if (!solid)
 		return;
@@ -688,18 +602,10 @@ static void audio_wave_video_render(void *data, gs_effect_t *effect)
 	gs_technique_end(tech);
 }
 
-// -----------------------------------------------------------------------------
-// Name helper
-// -----------------------------------------------------------------------------
-
 static const char *audio_wave_get_name(void *)
 {
 	return kSourceName;
 }
-
-// -----------------------------------------------------------------------------
-// Registration function (called from plugin-main.cpp)
-// -----------------------------------------------------------------------------
 
 extern "C" void register_audio_wave_source(void)
 {
