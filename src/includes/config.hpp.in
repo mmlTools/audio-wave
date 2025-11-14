@@ -1,0 +1,5 @@
+#pragma once
+
+// These get replaced by CMake at configure time
+#define PLUGIN_NAME "@PROJECT_NAME@"
+#define PLUGIN_VERSION "@PROJECT_VERSION@"
