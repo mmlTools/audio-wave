@@ -4,7 +4,7 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake" NO_POLICY_SCO
 
 # Defaults if not passed from CLI (-D_name=... -D_version=...)
 if(NOT DEFINED _name)
-  set(_name "obs-audiowave")
+  set(_name "audio-wave")
 endif()
 if(NOT DEFINED _version)
   set(_version "0.1.0")
