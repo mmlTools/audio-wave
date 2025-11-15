@@ -1,0 +1,496 @@
+/* =========================================
+   Audio Wave Visualizer – Docs Styles
+   Light, professional, flat UI
+========================================= */
+
+:root {
+  --bg-page: #f5f5f8;
+  --bg-surface: #ffffff;
+  --bg-soft: #f9fafb;
+
+  --border-subtle: #e2e5ee;
+
+  --text-main: #111827;
+  --text-muted: #6b7280;
+  --text-soft: #9ca3af;
+
+  --accent: #2563eb;          /* main blue */
+  --accent-soft: #e5edff;
+
+  --accent-ko-fi: #ff5f5f;
+  --accent-paypal: #0070ba;
+  --accent-github: #24292e;
+  --accent-download: #059669;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  --shadow-soft: 0 10px 30px rgba(15, 23, 42, 0.08);
+
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}
+
+/* ========== Base ========== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--text-main);
+  background-color: var(--bg-page);
+}
+
+/* Simple layout container */
+
+.page {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 3rem;
+}
+
+/* ========== Header ========== */
+
+.site-header {
+  background-color: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-soft);
+}
+
+.site-header-inner {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 1.75rem 1.5rem 2rem;
+}
+
+.site-header h1 {
+  margin: 0 0 0.75rem;
+  font-size: 2rem;
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+}
+
+.tagline {
+  margin: 0 0 1.5rem;
+  color: var(--text-muted);
+  font-size: 0.98rem;
+}
+
+/* ========== Buttons / CTAs ========== */
+
+.cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+
+  padding: 0.65rem 1.1rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  background-color: #ffffff;
+  color: var(--text-main);
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.08s ease;
+}
+
+/* if you use image icons inside buttons */
+.btn img {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+/* generic hover */
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
+}
+
+/* specific variants */
+.btn-ko-fi {
+  background-color: var(--accent-ko-fi);
+  border-color: var(--accent-ko-fi);
+  color: #ffffff;
+}
+
+.btn-ko-fi:hover {
+  background-color: #e35151;
+  border-color: #e35151;
+}
+
+.btn-paypal {
+  background-color: var(--accent-paypal);
+  border-color: var(--accent-paypal);
+  color: #ffffff;
+}
+
+.btn-paypal:hover {
+  background-color: #005aa3;
+  border-color: #005aa3;
+}
+
+.btn-github {
+  background-color: #ffffff;
+  border-color: #d1d5db;
+  color: var(--accent-github);
+}
+
+.btn-github:hover {
+  background-color: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.btn-download {
+  background-color: var(--accent-download);
+  border-color: var(--accent-download);
+  color: #ffffff;
+}
+
+.btn-download:hover {
+  background-color: #047857;
+  border-color: #047857;
+}
+
+/* ========== Sections ========== */
+
+.section {
+  margin-top: 2.5rem;
+  padding: 1.75rem 1.5rem;
+  background-color: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.03);
+}
+
+.section h2 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  font-size: 1.35rem;
+}
+
+.section p {
+  margin: 0 0 0.75rem;
+  color: var(--text-main);
+}
+
+/* ========== Typography helpers ========== */
+
+strong {
+  font-weight: 600;
+}
+
+em {
+  font-style: italic;
+  color: var(--text-main);
+}
+
+/* Inline code and code blocks */
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.86rem;
+  background-color: #111827;
+  color: #e5e7eb;
+  padding: 0.18em 0.35em;
+  border-radius: var(--radius-sm);
+}
+
+pre code {
+  display: block;
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+}
+
+/* ========== Quick Start Steps ========== */
+
+ol.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.6rem;
+}
+
+/* individual step */
+ol.steps > li {
+  background-color: var(--bg-soft);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  padding: 1.4rem 1.4rem 1.2rem;
+}
+
+ol.steps > li h3 {
+  margin-top: 0;
+  margin-bottom: 0.75rem;
+  font-size: 1.05rem;
+}
+
+/* nested list inside step */
+ol.steps > li ul {
+  margin: 0.75rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--text-muted);
+}
+
+ol.steps > li ul li + li {
+  margin-top: 0.4rem;
+}
+
+/* pill for “+” icon in text */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4rem;
+  height: 1.4rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid #d1d5db;
+  background-color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+/* ========== Screenshots / Figures ========== */
+
+.screenshot {
+  margin: 1rem 0 0;
+  padding: 0.9rem;
+  border-radius: var(--radius-lg);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+}
+
+.screenshot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+}
+
+.screenshot figcaption {
+  margin-top: 0.6rem;
+  font-size: 0.86rem;
+  color: var(--text-soft);
+}
+
+/* ========== Cards (Controls section) ========== */
+
+.section-cards {
+  /* same base as section, nothing extra needed */
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1.2rem;
+  margin-top: 1.2rem;
+}
+
+.card {
+  background-color: var(--bg-soft);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  padding: 1.15rem 1.2rem;
+}
+
+.card h3 {
+  margin-top: 0;
+  margin-bottom: 0.6rem;
+  font-size: 1rem;
+}
+
+.card p {
+  margin-bottom: 0.5rem;
+  color: var(--text-main);
+}
+
+.card ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--text-muted);
+}
+
+.card ul li + li {
+  margin-top: 0.25rem;
+}
+
+/* ========== Ideas list ========== */
+
+.ideas-list {
+  margin: 0.3rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.ideas-list li {
+  margin: 0.3rem 0;
+  color: var(--text-muted);
+}
+
+/* ========== FAQ / Troubleshooting ========== */
+
+.faq {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.faq details {
+  background-color: var(--bg-soft);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  padding: 0.85rem 0.95rem;
+}
+
+.faq summary {
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.faq summary::-webkit-details-marker {
+  display: none;
+}
+
+/* optional: simple pseudo marker */
+.faq summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 0.45rem;
+  font-size: 0.85rem;
+  color: var(--text-soft);
+  transition: transform 0.18s ease;
+}
+
+.faq details[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.faq details ul,
+.faq details p {
+  margin: 0.55rem 0 0;
+  color: var(--text-muted);
+}
+
+/* ========== Footer ========== */
+
+.site-footer {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 1.25rem 1.5rem 2.25rem;
+  font-size: 0.86rem;
+  color: var(--text-soft);
+  text-align: center;
+}
+
+/* ========== Responsive tweaks ========== */
+
+@media (max-width: 768px) {
+  .site-header-inner {
+    padding: 1.4rem 1.2rem 1.75rem;
+  }
+
+  .site-header h1 {
+    font-size: 1.6rem;
+  }
+
+  .tagline {
+    font-size: 0.95rem;
+  }
+
+  .cta-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .section {
+    padding: 1.4rem 1.2rem;
+  }
+}
+/* Intro section layout with presentation image */
+
+.intro-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 2rem;
+}
+
+.intro-copy {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.intro-visual {
+  flex: 0 0 320px;
+  margin: 0;
+  padding: 0.9rem;
+  border-radius: 12px;
+  background-color: #f9fafb;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.04);
+  text-align: center;
+}
+
+.intro-visual img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+.intro-visual figcaption {
+  margin-top: 0.55rem;
+  font-size: 0.82rem;
+  color: #6b7280;
+}
+
+/* Stack on small screens */
+@media (max-width: 768px) {
+  .intro-layout {
+    flex-direction: column;
+  }
+
+  .intro-visual {
+    width: 100%;
+  }
+}
