@@ -6,6 +6,7 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake" NO_POLICY_SCO
 if(NOT DEFINED _name)
   set(_name "audio-wave")
 endif()
+
 if(NOT DEFINED _version)
   set(_version "0.1.0")
 endif()
@@ -16,17 +17,15 @@ project(${_name} VERSION ${_version} LANGUAGES C CXX)
 # Options (simple)
 # ---------------------------------------------------------------------------
 option(ENABLE_FRONTEND_API "Use obs-frontend-api for UI functionality" OFF)
-option(ENABLE_QT           "Use Qt functionality"                      OFF)
+option(ENABLE_QT "Use Qt functionality" OFF)
 
 include(compilerconfig)
 include(defaults)
 include(helpers)
 
-# If you want: keep your warning tweaks
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if(MSVC)
-  # Don't treat warnings as errors for this plugin
   add_compile_options(/WX- /utf-8)
 endif()
 
@@ -51,18 +50,15 @@ set(AW_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 # ---------------------------------------------------------------------------
 add_library(${CMAKE_PROJECT_NAME} MODULE)
 
-# libobs
 find_package(libobs REQUIRED)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs)
 
-# Optional: frontend API
 if(ENABLE_FRONTEND_API)
   find_package(obs-frontend-api REQUIRED)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::obs-frontend-api)
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ENABLE_FRONTEND_API=1)
 endif()
 
-# Optional: Qt
 if(ENABLE_QT)
   find_package(Qt6 COMPONENTS Core Widgets QUIET)
   if(Qt6_FOUND)
@@ -80,9 +76,6 @@ if(ENABLE_QT)
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ENABLE_QT=1)
 endif()
 
-# ---------------------------------------------------------------------------
-# config.hpp (PLUGIN_NAME / PLUGIN_VERSION)
-# ---------------------------------------------------------------------------
 file(MAKE_DIRECTORY "${AW_GEN_DIR}")
 
 configure_file(
@@ -97,9 +90,6 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
   ${AW_GEN_DIR}
 )
 
-# ---------------------------------------------------------------------------
-# Sources
-# ---------------------------------------------------------------------------
 set(OBS_AUDIO_WAVE_SRC
   ${AW_SRC_DIR}/plugin-main.cpp
   ${AW_SRC_DIR}/audio-wave-render.cpp
@@ -118,9 +108,6 @@ set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES
   CXX_STANDARD_REQUIRED YES
 )
 
-# *** IMPORTANT ***
-# Let the obs-plugintemplate helpers handle OUTPUT_NAME, bundles,
-# and install rules (including macOS .plugin layout).
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES
   OUTPUT_NAME ${_name}
 )
