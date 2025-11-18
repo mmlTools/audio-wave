@@ -102,6 +102,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # ---------------------------------------------------------------------------
 set(OBS_AUDIO_WAVE_SRC
   ${AW_SRC_DIR}/plugin-main.cpp
+  ${AW_SRC_DIR}/audio-wave-render.cpp
   ${AW_SRC_DIR}/audio-wave.cpp
 )
 
