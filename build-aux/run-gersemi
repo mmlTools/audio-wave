@@ -1,1 +1,3 @@
-.run-format.zsh
+#!/usr/bin/env zsh
+
+source "$(dirname "$0")/.run-format.zsh"
