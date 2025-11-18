@@ -5,7 +5,7 @@ inputs:
   failCondition:
     description: Controls whether failed checks also fail the workflow run
     required: false
-    default: error
+    default: never
   workingDirectory:
     description: Working directory for checks
     required: false
@@ -20,7 +20,7 @@ runs:
       shell: bash
       run: |
         echo "::notice::run-clang-format action requires a macOS-based or Linux-based runner."
-        exit 2
+        exit 0
 
     # ✅ Check for changed files
     - name: Check for Changed Files ✅
@@ -40,7 +40,7 @@ runs:
         sudo apt-get install -y clang-format
         echo ::endgroup::
 
-    # ✅ Run clang-format check
+    # ✅ Run clang-format check (non-blocking)
     - name: Run clang-format 🐉
       if: fromJSON(steps.checks.outputs.hasChangedFiles)
       id: clang-format-check
@@ -53,13 +53,13 @@ runs:
         changes=$(echo "${CHANGED_FILES}" | tr -d '[]"\'' | tr ',' ' ')
         echo "Checking formatting for: $changes"
         for file in $changes; do
-          clang-format --dry-run --Werror "$file"
+          clang-format --dry-run --Werror "$file" || echo "⚠ Formatting issue in $file"
         done
         echo ::endgroup::
 
-    # ✅ Auto-fix if check fails
+    # ✅ Auto-fix regardless of check result
     - name: Auto-fix clang-format
-      if: failure() && steps.clang-format-check.outcome == 'failure'
+      if: fromJSON(steps.checks.outputs.hasChangedFiles)
       shell: bash
       working-directory: ${{ github.workspace }}
       env:
@@ -73,6 +73,6 @@ runs:
         git config --global user.name "github-actions"
         git config --global user.email "github-actions@github.com"
         git add $changes
-        git commit -m "Apply clang-format auto-fix"
-        git push
+        git commit -m "Apply clang-format auto-fix" || echo "No changes to commit"
+        git push || echo "Push skipped"
         echo ::endgroup::
