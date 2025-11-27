@@ -13,25 +13,27 @@ struct audio_wave_source {
 
 	std::string audio_source_name;
 
-	uint32_t color        = 0xFFFFFF;
-	uint32_t color2       = 0x00FF00;
-	int      width        = 800;
-	int      height       = 200;
-	int      mode         = 0;
-	bool     use_gradient = false;
-	float    gain         = 2.0f;
-	bool     mirror       = false;
+	uint32_t color = 0xFFFFFF;
+	uint32_t color2 = 0x00FF00;
+	int width = 800;
+	int height = 200;
+	int mode = 0; // 0 = Wave, 1 = Bars, 2 = Rectangular, 3 = Rectangular (Filled)
+	bool use_gradient = false;
+	float gain = 2.0f;
+	bool mirror = false;
 
-	int      frame_radius  = 0;
-	int      frame_density = 100;
+	int frame_radius = 0;    // 0..100
+	int frame_density = 100; // %
 
+	// Audio capture
 	obs_weak_source_t *audio_weak = nullptr;
 
-	std::mutex         audio_mutex;
+	std::mutex audio_mutex;
 	std::vector<float> samples_left;
 	std::vector<float> samples_right;
-	size_t             num_samples = 0;
+	size_t num_samples = 0;
 
+	// Pre-processed mono wave [0..1]
 	std::vector<float> wave;
 };
 
