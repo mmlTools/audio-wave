@@ -13,15 +13,14 @@ static const char *kSourceName = "Audio Wave (Simple)";
 
 static const char *SETTING_AUDIO_SOURCE = "audio_source";
 static const char *SETTING_COLOR = "wave_color";
-static const char *SETTING_COLOR2 = "wave_color2";
-static const char *SETTING_GRADIENT_ENABLE = "use_gradient";
 static const char *SETTING_WIDTH = "width";
 static const char *SETTING_HEIGHT = "height";
-static const char *SETTING_MODE = "draw_mode";
+static const char *SETTING_SHAPE = "shape_type";
+static const char *SETTING_STYLE = "style_type";
 static const char *SETTING_AMPLITUDE = "amplitude";
 static const char *SETTING_MIRROR = "mirror_wave";
-static const char *SETTING_FRAME_RADIUS = "frame_radius";
 static const char *SETTING_FRAME_DENSITY = "frame_density";
+static const char *SETTING_CURVE = "curve_power";
 
 static struct obs_source_info audio_wave_source_info;
 
@@ -36,16 +35,9 @@ static uint32_t audio_wave_get_width(void *data);
 static uint32_t audio_wave_get_height(void *data);
 static void audio_wave_video_render(void *data, gs_effect_t *effect);
 
-static bool gradient_modified(obs_properties_t *props, obs_property_t *p, obs_data_t *settings);
-static bool mode_modified(obs_properties_t *props, obs_property_t *p, obs_data_t *settings);
-
 #ifndef UNUSED_PARAMETER
 #define UNUSED_PARAMETER(x) (void)(x)
 #endif
-
-/* ------------------------------------------------------------------------- */
-/* Utility                                                                   */
-/* ------------------------------------------------------------------------- */
 
 static void set_solid_color(gs_eparam_t *param, uint32_t color)
 {
@@ -65,101 +57,156 @@ static void set_solid_color(gs_eparam_t *param, uint32_t color)
 	gs_effect_set_vec4(param, &c);
 }
 
-static uint32_t lerp_color(uint32_t c1, uint32_t c2, float t)
+static inline float apply_curve(const audio_wave_source *s, float v)
 {
-	if (t < 0.0f)
-		t = 0.0f;
-	if (t > 1.0f)
-		t = 1.0f;
+	if (v < 0.0f)
+		v = 0.0f;
+	if (v > 1.0f)
+		v = 1.0f;
 
-	uint8_t r1 = c1 & 0xFF;
-	uint8_t g1 = (c1 >> 8) & 0xFF;
-	uint8_t b1 = (c1 >> 16) & 0xFF;
+	float p = s ? s->curve_power : 1.0f;
+	if (p <= 0.0f)
+		p = 1.0f;
 
-	uint8_t r2 = c2 & 0xFF;
-	uint8_t g2 = (c2 >> 8) & 0xFF;
-	uint8_t b2 = (c2 >> 16) & 0xFF;
-
-	uint8_t r = (uint8_t)(r1 + (r2 - r1) * t);
-	uint8_t g = (uint8_t)(g1 + (g2 - g1) * t);
-	uint8_t b = (uint8_t)(b1 + (b2 - b1) * t);
-
-	return (uint32_t)((b << 16) | (g << 8) | r);
+	return powf(v, p);
 }
 
-/* Sample point + normal on a rectangle/ellipse frame */
-static void sample_frame_rect_ellipse(const audio_wave_source *s, float u, float radius_factor, float &x, float &y,
-				      float &nx, float &ny)
+struct shape_vertex {
+	float x;
+	float y;
+};
+
+static void build_shape_vertices(const audio_wave_source *s, std::vector<shape_vertex> &verts)
 {
+	verts.clear();
+
 	const float w = (float)s->width;
 	const float h = (float)s->height;
-
 	const float cx = w * 0.5f;
 	const float cy = h * 0.5f;
-	const float rx = w * 0.5f;
-	const float ry = h * 0.5f;
+
+	const float R = std::max(1.0f, std::min(w, h) * 0.5f - 1.0f);
+
+	switch (s->shape) {
+	case AUDIO_WAVE_SHAPE_RECT: {
+		const float x0 = 0.0f;
+		const float x1 = w - 1.0f;
+		const float y0 = 0.0f;
+		const float y1 = h - 1.0f;
+
+		verts.push_back({x0, y0});
+		verts.push_back({x1, y0});
+		verts.push_back({x1, y1});
+		verts.push_back({x0, y1});
+		break;
+	}
+	case AUDIO_WAVE_SHAPE_CIRCLE: {
+		const int segments = 64;
+		for (int i = 0; i < segments; ++i) {
+			const float t = (float)i / (float)segments;
+			const float angle = t * 2.0f * (float)M_PI;
+			const float x = cx + R * std::cos(angle);
+			const float y = cy * 1.0f + R * std::sin(angle);
+			verts.push_back({x, y});
+		}
+		break;
+	}
+	case AUDIO_WAVE_SHAPE_HEX: {
+		const int sides = 6;
+		for (int i = 0; i < sides; ++i) {
+			const float angle = (2.0f * (float)M_PI * (float)i) / (float)sides;
+			const float x = cx + R * std::cos(angle);
+			const float y = cy + R * std::sin(angle);
+			verts.push_back({x, y});
+		}
+		break;
+	}
+	case AUDIO_WAVE_SHAPE_STAR: {
+		const int points = 5;
+		const float R_outer = R;
+		const float R_inner = R * 0.5f;
+
+		for (int i = 0; i < points * 2; ++i) {
+			const float angle = (float)i * (float)M_PI / (float)points;
+			const float r = (i % 2 == 0) ? R_outer : R_inner;
+			const float x = cx + r * std::cos(angle - (float)M_PI / 2.0f);
+			const float y = cy + r * std::sin(angle - (float)M_PI / 2.0f);
+			verts.push_back({x, y});
+		}
+		break;
+	}
+	case AUDIO_WAVE_SHAPE_TRIANGLE: {
+		const int sides = 3;
+		for (int i = 0; i < sides; ++i) {
+			const float angle = (2.0f * (float)M_PI * (float)i) / (float)sides - (float)M_PI / 2.0f;
+			const float x = cx + R * std::cos(angle);
+			const float y = cy + R * std::sin(angle);
+			verts.push_back({x, y});
+		}
+		break;
+	}
+	case AUDIO_WAVE_SHAPE_DIAMOND: {
+		verts.push_back({cx, cy - R});
+		verts.push_back({cx + R, cy});
+		verts.push_back({cx, cy + R});
+		verts.push_back({cx - R, cy});
+		break;
+	}
+	default:
+		verts.push_back({0.0f, 0.0f});
+		verts.push_back({w - 1.0f, 0.0f});
+		verts.push_back({w - 1.0f, h - 1.0f});
+		verts.push_back({0.0f, h - 1.0f});
+		break;
+	}
+
+	if (verts.size() < 3) {
+		verts.clear();
+		verts.push_back({0.0f, 0.0f});
+		verts.push_back({w - 1.0f, 0.0f});
+		verts.push_back({w - 1.0f, h - 1.0f});
+	}
+}
+
+static void sample_frame_shape(const audio_wave_source *s, const std::vector<shape_vertex> &verts, float u, float &x,
+			       float &y, float &nx, float &ny)
+{
+	if (verts.empty()) {
+		x = y = nx = ny = 0.0f;
+		return;
+	}
+
+	const float w = (float)s->width;
+	const float h = (float)s->height;
+	const float cx = w * 0.5f;
+	const float cy = h * 0.5f;
 
 	float t = u - std::floor(u);
 	if (t < 0.0f)
 		t += 1.0f;
 
-	float xr = 0.0f, yr = 0.0f;
-	float nxr = 0.0f, nyr = -1.0f;
+	const size_t N = verts.size();
+	const float pos = t * (float)N;
+	const size_t i = (size_t)std::floor(pos) % N;
+	const float f = pos - std::floor(pos);
 
-	float edge = t * 4.0f;
-	if (edge < 1.0f) {
-		float f = edge;
-		xr = f * (w - 1.0f);
-		yr = 0.0f;
-		nxr = 0.0f;
-		nyr = -1.0f;
-	} else if (edge < 2.0f) {
-		float f = edge - 1.0f;
-		xr = (w - 1.0f);
-		yr = f * (h - 1.0f);
-		nxr = 1.0f;
-		nyr = 0.0f;
-	} else if (edge < 3.0f) {
-		float f = edge - 2.0f;
-		xr = (1.0f - f) * (w - 1.0f);
-		yr = (h - 1.0f);
-		nxr = 0.0f;
-		nyr = 1.0f;
-	} else {
-		float f = edge - 3.0f;
-		xr = 0.0f;
-		yr = (1.0f - f) * (h - 1.0f);
-		nxr = -1.0f;
-		nyr = 0.0f;
-	}
+	const shape_vertex &v0 = verts[i];
+	const shape_vertex &v1 = verts[(i + 1) % N];
 
-	const float angle = t * 2.0f * (float)M_PI;
+	x = v0.x + (v1.x - v0.x) * f;
+	y = v0.y + (v1.y - v0.y) * f;
 
-	float xe = cx + rx * std::cos(angle);
-	float ye = cy + ry * std::sin(angle);
-	float nxe = std::cos(angle);
-	float nye = std::sin(angle);
-
-	float f = std::clamp(radius_factor, 0.0f, 1.0f);
-
-	x = xr * (1.0f - f) + xe * f;
-	y = yr * (1.0f - f) + ye * f;
-	nx = nxr * (1.0f - f) + nxe * f;
-	ny = nyr * (1.0f - f) + nye * f;
-
-	float len = std::sqrt(nx * nx + ny * ny);
-	if (len > 0.0001f) {
-		nx /= len;
-		ny /= len;
+	float dx = x - cx;
+	float dy = y - cy;
+	float len = std::sqrt(dx * dx + dy * dy);
+	if (len > 1e-4f) {
+		nx = dx / len;
+		ny = dy / len;
 	} else {
 		nx = 0.0f;
 		ny = -1.0f;
 	}
 }
-
-/* ------------------------------------------------------------------------- */
-/* Wave building                                                             */
-/* ------------------------------------------------------------------------- */
 
 void audio_wave_build_wave(audio_wave_source *s)
 {
@@ -189,145 +236,271 @@ void audio_wave_build_wave(audio_wave_source *s)
 	}
 }
 
-/* ------------------------------------------------------------------------- */
-/* Rectangular / rounded frame modes                                         */
-/* ------------------------------------------------------------------------- */
-
-static void draw_rectangular_frame_wave(audio_wave_source *s, gs_eparam_t *color_param, bool filled)
+static void draw_line_wave(audio_wave_source *s, gs_eparam_t *color_param)
 {
-	if (!s || s->width <= 0 || s->height <= 0)
-		return;
-
 	const size_t frames = s->wave.size();
-	if (!frames)
+	if (!frames || s->width <= 0 || s->height <= 0)
 		return;
 
 	const float w = (float)s->width;
 	const float h = (float)s->height;
 
-	const float max_bar_len = std::min(w, h) * 0.15f;
+	const float mid_y = h * 0.5f;
+	const float baseline = h;      
+	const float top_margin = 2.0f;
 
-	const float perimeter_factor = (w + h) * 0.5f / 4.0f;
-	const float density_factor = std::clamp((float)s->frame_density / 100.0f, 0.2f, 3.0f);
-
-	uint32_t segments = (uint32_t)std::floor(perimeter_factor * density_factor);
-
-	if (segments < 32)
-		segments = 32;
-
-	const float radius_factor = std::clamp((float)s->frame_radius / 100.0f, 0.0f, 1.0f);
-
-	// Precompute base & outer points for filled mode
-	std::vector<float> base_x, base_y, outer_x, outer_y;
-	if (filled) {
-		base_x.resize(segments);
-		base_y.resize(segments);
-		outer_x.resize(segments);
-		outer_y.resize(segments);
-	}
-
-	/* Solid color path (non-gradient) is batched into one draw call */
-	if (!s->use_gradient) {
-		if (color_param)
-			set_solid_color(color_param, s->color);
-
-		if (!filled) {
-			gs_render_start(true);
-			for (uint32_t i = 0; i < segments; ++i) {
-				const float u = (float)i / (float)segments;
-
-				const size_t idx = (size_t)(u * (float)(frames - 1));
-				const float v = s->wave[idx];
-				const float bar_len = v * max_bar_len;
-
-				float x, y, nx, ny;
-				sample_frame_rect_ellipse(s, u, radius_factor, x, y, nx, ny);
-
-				float x2 = x + nx * bar_len;
-				float y2 = y + ny * bar_len;
-
-				gs_vertex2f(x, y);
-				gs_vertex2f(x2, y2);
-			}
-			gs_render_stop(GS_LINES);
-		} else {
-			// Filled ring: triangle strip using base + outer points
-			for (uint32_t i = 0; i < segments; ++i) {
-				const float u = (float)i / (float)segments;
-
-				const size_t idx = (size_t)(u * (float)(frames - 1));
-				const float v = s->wave[idx];
-				const float bar_len = v * max_bar_len;
-
-				float x, y, nx, ny;
-				sample_frame_rect_ellipse(s, u, radius_factor, x, y, nx, ny);
-
-				base_x[i] = x;
-				base_y[i] = y;
-				outer_x[i] = x + nx * bar_len;
-				outer_y[i] = y + ny * bar_len;
-			}
-
-			gs_render_start(true);
-			for (uint32_t i = 0; i < segments; ++i) {
-				uint32_t idx = i;
-				uint32_t next = (i + 1) % segments;
-
-				gs_vertex2f(base_x[idx], base_y[idx]);
-				gs_vertex2f(outer_x[idx], outer_y[idx]);
-				gs_vertex2f(base_x[next], base_y[next]);
-
-				gs_vertex2f(outer_x[idx], outer_y[idx]);
-				gs_vertex2f(outer_x[next], outer_y[next]);
-				gs_vertex2f(base_x[next], base_y[next]);
-			}
-			gs_render_stop(GS_TRIS);
-		}
-
+	const uint32_t width_u = (uint32_t)w;
+	if (width_u == 0)
 		return;
+
+	std::vector<float> amp(width_u);
+	for (uint32_t x = 0; x < width_u; ++x) {
+		const size_t idx = (size_t)((double)x * (double)(frames - 1) / (double)std::max(1.0f, w - 1.0f));
+		amp[x] = (idx < frames) ? s->wave[idx] : 0.0f;
 	}
 
-	/* Gradient mode – keep per-segment color (less batching possible) */
-	for (uint32_t i = 0; i < segments; ++i) {
-		const float u = (float)i / (float)segments;
+	std::vector<float> amp_smooth;
+	const bool smooth_needed =
+		(s->style == AUDIO_WAVE_STYLE_WAVE_LINEAR_SMOOTH || s->style == AUDIO_WAVE_STYLE_WAVE_LINEAR_FILLED);
 
-		const size_t idx = (size_t)(u * (float)(frames - 1));
-		const float v = s->wave[idx];
-		const float bar_len = v * max_bar_len;
-
-		float x, y, nx, ny;
-		sample_frame_rect_ellipse(s, u, radius_factor, x, y, nx, ny);
-
-		float x2 = x + nx * bar_len;
-		float y2 = y + ny * bar_len;
-
-		float color_t = u;
-		if (color_param)
-			set_solid_color(color_param, lerp_color(s->color, s->color2, color_t));
-
-		if (!filled) {
-			gs_render_start(true);
-			gs_vertex2f(x, y);
-			gs_vertex2f(x2, y2);
-			gs_render_stop(GS_LINES);
-		} else {
-			// For gradient-filled ring, just draw thin quads segment by segment
-			gs_render_start(true);
-			gs_vertex2f(x, y);
-			gs_vertex2f(x2, y2);
-			gs_vertex2f(x, y);
-
-			gs_vertex2f(x2, y2);
-			gs_vertex2f(x2, y2);
-			gs_vertex2f(x, y);
-			gs_render_stop(GS_TRIS);
+	if (smooth_needed && !amp.empty()) {
+		amp_smooth.resize(amp.size());
+		float prev = amp[0];
+		amp_smooth[0] = prev;
+		const float alpha = 0.15f;
+		for (size_t i = 1; i < amp.size(); ++i) {
+			prev = prev + alpha * (amp[i] - prev);
+			amp_smooth[i] = prev;
 		}
+	}
+
+	auto get_amp_raw = [&](uint32_t x) -> float {
+		return smooth_needed ? amp_smooth[x] : amp[x];
+	};
+
+	if (color_param)
+		set_solid_color(color_param, s->color);
+
+	if (s->style == AUDIO_WAVE_STYLE_WAVE_LINE || s->style == AUDIO_WAVE_STYLE_WAVE_LINEAR_SMOOTH) {
+		gs_render_start(true);
+		for (uint32_t x = 0; x < width_u; ++x) {
+			const float v_raw = get_amp_raw(x);
+			const float v = apply_curve(s, v_raw);
+			const float y = mid_y - v * (mid_y - top_margin);
+			gs_vertex2f((float)x, y);
+		}
+		gs_render_stop(GS_LINESTRIP);
+
+		if (s->mirror) {
+			gs_render_start(true);
+			for (uint32_t x = 0; x < width_u; ++x) {
+				const float v_raw = get_amp_raw(x);
+				const float v = apply_curve(s, v_raw);
+				const float y = mid_y - v * (mid_y - top_margin);
+				const float y_m = mid_y + (mid_y - y);
+				gs_vertex2f((float)x, y_m);
+			}
+			gs_render_stop(GS_LINESTRIP);
+		}
+	} else if (s->style == AUDIO_WAVE_STYLE_WAVE_LINEAR_FILLED) {
+		gs_render_start(true);
+		for (uint32_t x = 0; x + 1 < width_u; ++x) {
+			const float v1_raw = get_amp_raw(x);
+			const float v2_raw = get_amp_raw(x + 1);
+
+			const float v1 = apply_curve(s, v1_raw);
+			const float v2 = apply_curve(s, v2_raw);
+
+			const float y1 = top_margin + (1.0f - v1) * (h - top_margin);
+			const float y2 = top_margin + (1.0f - v2) * (h - top_margin);
+
+			gs_vertex2f((float)x, baseline);
+			gs_vertex2f((float)x, y1);
+			gs_vertex2f((float)(x + 1), baseline);
+			gs_vertex2f((float)(x + 1), baseline);
+			gs_vertex2f((float)x, y1);
+			gs_vertex2f((float)(x + 1), y2);
+		}
+		gs_render_stop(GS_TRIS);
+	} else {
+		const uint32_t step = 3;
+		gs_render_start(true);
+		for (uint32_t x = 0; x < width_u; x += step) {
+			const float v_raw = get_amp_raw(x);
+			const float v = apply_curve(s, v_raw);
+			const float y = mid_y - v * (mid_y - 4.0f);
+
+			gs_vertex2f((float)x, mid_y);
+			gs_vertex2f((float)x, y);
+
+			if (s->mirror) {
+				const float y_m = mid_y + (mid_y - y);
+				gs_vertex2f((float)x, mid_y);
+				gs_vertex2f((float)x, y_m);
+			}
+		}
+		gs_render_stop(GS_LINES);
 	}
 }
 
-/* ------------------------------------------------------------------------- */
-/* Main drawing                                                              */
-/* ------------------------------------------------------------------------- */
+static void draw_shape_wave(audio_wave_source *s, gs_eparam_t *color_param)
+{
+	const size_t frames = s->wave.size();
+	if (!frames || s->width <= 0 || s->height <= 0)
+		return;
+
+	const float w = (float)s->width;
+	const float h = (float)s->height;
+
+	const float max_bar_len = std::min(w, h) * 0.20f;
+
+	std::vector<shape_vertex> verts;
+	build_shape_vertices(s, verts);
+	if (verts.empty())
+		return;
+
+	float density_raw = (float)s->frame_density;
+	if (!std::isfinite(density_raw))
+		density_raw = 100.0f;
+
+	uint32_t segments = (uint32_t)std::clamp(density_raw * 4.0f, 32.0f, 2048.0f);
+
+	if (segments == 0)
+		return;
+
+	std::vector<float> base_x(segments), base_y(segments);
+	std::vector<float> nx(segments), ny(segments);
+	std::vector<float> amp(segments), amp_smooth;
+
+	for (uint32_t i = 0; i < segments; ++i) {
+		const float u = (float)i / (float)segments;
+
+		float x, y, nxx, nyy;
+		sample_frame_shape(s, verts, u, x, y, nxx, nyy);
+		base_x[i] = x;
+		base_y[i] = y;
+		nx[i] = nxx;
+		ny[i] = nyy;
+
+		const size_t idx = (size_t)(u * (float)(frames - 1));
+		amp[i] = (idx < frames) ? s->wave[idx] : 0.0f;
+	}
+
+	const bool smooth_needed =
+		(s->style == AUDIO_WAVE_STYLE_WAVE_LINEAR_SMOOTH || s->style == AUDIO_WAVE_STYLE_WAVE_LINEAR_FILLED);
+
+	if (smooth_needed && segments > 0) {
+		amp_smooth.resize(segments);
+		float prev = amp[0];
+		amp_smooth[0] = prev;
+		const float alpha = 0.15f;
+		for (uint32_t i = 1; i < segments; ++i) {
+			prev = prev + alpha * (amp[i] - prev);
+			amp_smooth[i] = prev;
+		}
+	}
+
+	auto get_amp_raw = [&](uint32_t i) -> float {
+		return smooth_needed ? amp_smooth[i] : amp[i];
+	};
+
+	if (color_param)
+		set_solid_color(color_param, s->color);
+
+	if (s->style == AUDIO_WAVE_STYLE_WAVE_LINE || s->style == AUDIO_WAVE_STYLE_WAVE_LINEAR_SMOOTH) {
+		gs_render_start(true);
+		for (uint32_t i = 0; i < segments; ++i) {
+			const float v_raw = get_amp_raw(i);
+			const float v = apply_curve(s, v_raw);
+			const float len = v * max_bar_len;
+			const float x = base_x[i] + nx[i] * len;
+			const float y = base_y[i] + ny[i] * len;
+			gs_vertex2f(x, y);
+		}
+		gs_render_stop(GS_LINESTRIP);
+
+		if (s->mirror) {
+			gs_render_start(true);
+			for (uint32_t i = 0; i < segments; ++i) {
+				const float v_raw = get_amp_raw(i);
+				const float v = apply_curve(s, v_raw);
+				const float len = v * max_bar_len;
+				const float x = base_x[i] - nx[i] * len;
+				const float y = base_y[i] - ny[i] * len;
+				gs_vertex2f(x, y);
+			}
+			gs_render_stop(GS_LINESTRIP);
+		}
+	} else if (s->style == AUDIO_WAVE_STYLE_WAVE_LINEAR_FILLED) {
+		std::vector<float> outer_x(segments), outer_y(segments);
+		std::vector<float> inner_x, inner_y;
+
+		if (s->mirror) {
+			inner_x.resize(segments);
+			inner_y.resize(segments);
+		}
+
+		for (uint32_t i = 0; i < segments; ++i) {
+			const float v_raw = get_amp_raw(i);
+			const float v = apply_curve(s, v_raw);
+			const float len = v * max_bar_len;
+
+			outer_x[i] = base_x[i] + nx[i] * len;
+			outer_y[i] = base_y[i] + ny[i] * len;
+
+			if (s->mirror) {
+				inner_x[i] = base_x[i] - nx[i] * len;
+				inner_y[i] = base_y[i] - ny[i] * len;
+			}
+		}
+
+		gs_render_start(true);
+		for (uint32_t i = 0; i < segments; ++i) {
+			uint32_t next = (i + 1) % segments;
+
+			gs_vertex2f(base_x[i], base_y[i]);
+			gs_vertex2f(outer_x[i], outer_y[i]);
+			gs_vertex2f(base_x[next], base_y[next]);
+			gs_vertex2f(outer_x[i], outer_y[i]);
+			gs_vertex2f(outer_x[next], outer_y[next]);
+			gs_vertex2f(base_x[next], base_y[next]);
+
+			if (s->mirror) {
+				gs_vertex2f(base_x[i], base_y[i]);
+				gs_vertex2f(inner_x[i], inner_y[i]);
+				gs_vertex2f(base_x[next], base_y[next]);
+
+				gs_vertex2f(inner_x[i], inner_y[i]);
+				gs_vertex2f(inner_x[next], inner_y[next]);
+				gs_vertex2f(base_x[next], base_y[next]);
+			}
+		}
+		gs_render_stop(GS_TRIS);
+	} else {
+		gs_render_start(true);
+		for (uint32_t i = 0; i < segments; ++i) {
+			const float v_raw = get_amp_raw(i);
+			const float v = apply_curve(s, v_raw);
+			const float len = v * max_bar_len;
+
+			const float x1 = base_x[i];
+			const float y1 = base_y[i];
+			const float x2 = x1 + nx[i] * len;
+			const float y2 = y1 + ny[i] * len;
+
+			gs_vertex2f(x1, y1);
+			gs_vertex2f(x2, y2);
+
+			if (s->mirror) {
+				const float x3 = x1 - nx[i] * len;
+				const float y3 = y1 - ny[i] * len;
+				gs_vertex2f(x1, y1);
+				gs_vertex2f(x3, y3);
+			}
+		}
+		gs_render_stop(GS_LINES);
+	}
+}
 
 void audio_wave_draw(audio_wave_source *s, gs_eparam_t *color_param)
 {
@@ -344,164 +517,26 @@ void audio_wave_draw(audio_wave_source *s, gs_eparam_t *color_param)
 	gs_matrix_push();
 
 	if (frames < 2) {
-		// Flat line when no data
-		if (!s->use_gradient) {
-			if (color_param)
-				set_solid_color(color_param, s->color);
-
-			gs_render_start(true);
-			for (uint32_t x = 0; x < (uint32_t)w; ++x)
-				gs_vertex2f((float)x, mid_y);
-			gs_render_stop(GS_LINESTRIP);
-		} else {
-			for (uint32_t x = 0; x + 1 < (uint32_t)w; x += 2) {
-				float t = w > 1.0f ? (float)x / (w - 1.0f) : 0.0f;
-				if (color_param)
-					set_solid_color(color_param, lerp_color(s->color, s->color2, t));
-
-				gs_render_start(true);
-				gs_vertex2f((float)x, mid_y);
-				gs_vertex2f((float)(x + 1), mid_y);
-				gs_render_stop(GS_LINES);
-			}
-		}
-
-		gs_matrix_pop();
-		return;
-	}
-
-	/* Rectangular / rounded modes (2 = line, 3 = filled) */
-	if (s->mode == 2 || s->mode == 3) {
-		const bool filled = (s->mode == 3);
-		draw_rectangular_frame_wave(s, color_param, filled);
-		gs_matrix_pop();
-		return;
-	}
-
-	/* --------------------------------------------------------------------- */
-	/* Horizontal Wave / Bars                                                */
-	/* --------------------------------------------------------------------- */
-
-	if (!s->use_gradient) {
 		if (color_param)
 			set_solid_color(color_param, s->color);
 
-		if (s->mode == 0) {
-			// Wave line (batched)
-			gs_render_start(true);
-			for (uint32_t x = 0; x < (uint32_t)w; ++x) {
-				const size_t idx =
-					(size_t)((double)x * (double)(frames - 1) / (double)std::max(1.0f, w - 1.0f));
-				const float v = s->wave[idx];
-				const float y = mid_y - v * (mid_y - 2.0f);
-				gs_vertex2f((float)x, y);
-			}
-			gs_render_stop(GS_LINESTRIP);
+		gs_render_start(true);
+		for (uint32_t x = 0; x < (uint32_t)w; ++x)
+			gs_vertex2f((float)x, mid_y);
+		gs_render_stop(GS_LINESTRIP);
 
-			if (s->mirror) {
-				gs_render_start(true);
-				for (uint32_t x = 0; x < (uint32_t)w; ++x) {
-					const size_t idx = (size_t)((double)x * (double)(frames - 1) /
-								    (double)std::max(1.0f, w - 1.0f));
-					const float v = s->wave[idx];
-					const float y = mid_y - v * (mid_y - 2.0f);
-					const float y_m = mid_y + (mid_y - y);
-					gs_vertex2f((float)x, y_m);
-				}
-				gs_render_stop(GS_LINESTRIP);
-			}
-		} else {
-			// Bars
-			const uint32_t step = 3;
-			gs_render_start(true);
-			for (uint32_t x = 0; x < (uint32_t)w; x += step) {
-				const size_t idx =
-					(size_t)((double)x * (double)(frames - 1) / (double)std::max(1.0f, w - 1.0f));
-				const float v = s->wave[idx];
-				const float y = mid_y - v * (mid_y - 4.0f);
+		gs_matrix_pop();
+		return;
+	}
 
-				gs_vertex2f((float)x, mid_y);
-				gs_vertex2f((float)x, y);
-
-				if (s->mirror) {
-					const float y_m = mid_y + (mid_y - y);
-					gs_vertex2f((float)x, mid_y);
-					gs_vertex2f((float)x, y_m);
-				}
-			}
-			gs_render_stop(GS_LINES);
-		}
+	if (s->shape == AUDIO_WAVE_SHAPE_LINE) {
+		draw_line_wave(s, color_param);
 	} else {
-		if (s->mode == 0) {
-			float prev_x = 0.0f;
-			float prev_y = mid_y;
-
-			for (uint32_t x = 1; x < (uint32_t)w; ++x) {
-				const size_t idx_prev = (size_t)((double)(x - 1) * (double)(frames - 1) /
-								 (double)std::max(1.0f, w - 1.0f));
-				const size_t idx_cur =
-					(size_t)((double)x * (double)(frames - 1) / (double)std::max(1.0f, w - 1.0f));
-
-				const float v_prev = s->wave[idx_prev];
-				const float v_cur = s->wave[idx_cur];
-
-				const float y_prev = mid_y - v_prev * (mid_y - 2.0f);
-				const float y_cur = mid_y - v_cur * (mid_y - 2.0f);
-
-				float t = w > 1.0f ? (float)x / (w - 1.0f) : 0.0f;
-				if (color_param)
-					set_solid_color(color_param, lerp_color(s->color, s->color2, t));
-
-				gs_render_start(true);
-				gs_vertex2f(prev_x, prev_y);
-				gs_vertex2f((float)x, y_cur);
-				gs_render_stop(GS_LINES);
-
-				if (s->mirror) {
-					const float y_prev_m = mid_y + (mid_y - y_prev);
-					const float y_cur_m = mid_y + (mid_y - y_cur);
-
-					gs_render_start(true);
-					gs_vertex2f(prev_x, y_prev_m);
-					gs_vertex2f((float)x, y_cur_m);
-					gs_render_stop(GS_LINES);
-				}
-
-				prev_x = (float)x;
-				prev_y = y_cur;
-			}
-		} else {
-			const uint32_t step = 3;
-			for (uint32_t x = 0; x < (uint32_t)w; x += step) {
-				const size_t idx =
-					(size_t)((double)x * (double)(frames - 1) / (double)std::max(1.0f, w - 1.0f));
-				const float v = s->wave[idx];
-				const float y = mid_y - v * (mid_y - 4.0f);
-
-				float t = w > 1.0f ? (float)x / (w - 1.0f) : 0.0f;
-				if (color_param)
-					set_solid_color(color_param, lerp_color(s->color, s->color2, t));
-
-				gs_render_start(true);
-				gs_vertex2f((float)x, mid_y);
-				gs_vertex2f((float)x, y);
-
-				if (s->mirror) {
-					const float y_m = mid_y + (mid_y - y);
-					gs_vertex2f((float)x, mid_y);
-					gs_vertex2f((float)x, y_m);
-				}
-				gs_render_stop(GS_LINES);
-			}
-		}
+		draw_shape_wave(s, color_param);
 	}
 
 	gs_matrix_pop();
 }
-
-/* ------------------------------------------------------------------------- */
-/* Audio capture & source plumbing                                           */
-/* ------------------------------------------------------------------------- */
 
 static void release_audio_weak(audio_wave_source *s)
 {
@@ -533,7 +568,6 @@ static bool enum_audio_sources(void *data, obs_source_t *source)
 	return true;
 }
 
-/* Optimized: no logging, minimal work, tiny lock window */
 static void audio_capture_cb(void *param, obs_source_t *, const struct audio_data *audio, bool muted)
 {
 	auto *s = static_cast<audio_wave_source *>(param);
@@ -602,44 +636,6 @@ static void detach_from_audio_source(audio_wave_source *s)
 	release_audio_weak(s);
 }
 
-/* ------------------------------------------------------------------------- */
-/* Properties & defaults                                                     */
-/* ------------------------------------------------------------------------- */
-
-static bool gradient_modified(obs_properties_t *props, obs_property_t *p, obs_data_t *settings)
-{
-	UNUSED_PARAMETER(p);
-
-	bool enabled = obs_data_get_bool(settings, SETTING_GRADIENT_ENABLE);
-	obs_property_t *c2 = obs_properties_get(props, SETTING_COLOR2);
-	if (c2)
-		obs_property_set_visible(c2, enabled);
-
-	return true;
-}
-
-static bool mode_modified(obs_properties_t *props, obs_property_t *p, obs_data_t *settings)
-{
-	UNUSED_PARAMETER(p);
-
-	const int mode = (int)obs_data_get_int(settings, SETTING_MODE);
-
-	obs_property_t *mirror = obs_properties_get(props, SETTING_MIRROR);
-	if (mirror)
-		obs_property_set_visible(mirror, mode != 2 && mode != 3);
-
-	obs_property_t *radius = obs_properties_get(props, SETTING_FRAME_RADIUS);
-	obs_property_t *density = obs_properties_get(props, SETTING_FRAME_DENSITY);
-	const bool rect_mode = (mode == 2 || mode == 3);
-
-	if (radius)
-		obs_property_set_visible(radius, rect_mode);
-	if (density)
-		obs_property_set_visible(density, rect_mode);
-
-	return true;
-}
-
 static obs_properties_t *audio_wave_get_properties(void *data)
 {
 	UNUSED_PARAMETER(data);
@@ -650,28 +646,33 @@ static obs_properties_t *audio_wave_get_properties(void *data)
 							 OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	obs_enum_sources(enum_audio_sources, p_list);
 
-	obs_property_t *mode =
-		obs_properties_add_list(props, SETTING_MODE, "Display Mode", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(mode, "Wave", 0);
-	obs_property_list_add_int(mode, "Bars", 1);
-	obs_property_list_add_int(mode, "Rectangular Wave", 2);
-	obs_property_list_add_int(mode, "Rectangular Wave (Filled)", 3);
-	obs_property_set_modified_callback(mode, mode_modified);
+	obs_property_t *shape =
+		obs_properties_add_list(props, SETTING_SHAPE, "Shape", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(shape, "Line (Horizontal)", AUDIO_WAVE_SHAPE_LINE);
+	obs_property_list_add_int(shape, "Rectangle", AUDIO_WAVE_SHAPE_RECT);
+	obs_property_list_add_int(shape, "Circle", AUDIO_WAVE_SHAPE_CIRCLE);
+	obs_property_list_add_int(shape, "Hexagon", AUDIO_WAVE_SHAPE_HEX);
+	obs_property_list_add_int(shape, "Star", AUDIO_WAVE_SHAPE_STAR);
+	obs_property_list_add_int(shape, "Triangle", AUDIO_WAVE_SHAPE_TRIANGLE);
+	obs_property_list_add_int(shape, "Diamond", AUDIO_WAVE_SHAPE_DIAMOND);
 
-	obs_property_t *grad = obs_properties_add_bool(props, SETTING_GRADIENT_ENABLE, "Use Gradient");
-	obs_property_set_modified_callback(grad, gradient_modified);
+	obs_property_t *style =
+		obs_properties_add_list(props, SETTING_STYLE, "Style", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(style, "Wave (Line)", AUDIO_WAVE_STYLE_WAVE_LINE);
+	obs_property_list_add_int(style, "Wave (Bars)", AUDIO_WAVE_STYLE_WAVE_BARS);
+	obs_property_list_add_int(style, "Wave (Linear Smooth)", AUDIO_WAVE_STYLE_WAVE_LINEAR_SMOOTH);
+	obs_property_list_add_int(style, "Wave (Linear Filled)", AUDIO_WAVE_STYLE_WAVE_LINEAR_FILLED);
 
 	obs_properties_add_color(props, SETTING_COLOR, "Wave Color");
-	obs_property_t *c2 = obs_properties_add_color(props, SETTING_COLOR2, "Wave Color 2");
-	obs_property_set_visible(c2, false);
 
-	obs_properties_add_int_slider(props, SETTING_FRAME_RADIUS, "Corner Radius (%)", 0, 100, 1);
-	obs_properties_add_int_slider(props, SETTING_FRAME_DENSITY, "Bar Density (%)", 10, 300, 5);
+	obs_properties_add_int_slider(props, SETTING_FRAME_DENSITY, "Shape Density (%)", 10, 300, 5);
 
 	obs_properties_add_int(props, SETTING_WIDTH, "Width", 64, 4096, 1);
 	obs_properties_add_int(props, SETTING_HEIGHT, "Height", 32, 2048, 1);
 
 	obs_properties_add_int_slider(props, SETTING_AMPLITUDE, "Amplitude (%)", 10, 400, 10);
+
+	obs_properties_add_int_slider(props, SETTING_CURVE, "Curve Power (%)", 20, 300, 5);
 
 	obs_properties_add_bool(props, SETTING_MIRROR, "Mirror wave horizontally");
 
@@ -684,18 +685,15 @@ static void audio_wave_get_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, SETTING_WIDTH, 800);
 	obs_data_set_default_int(settings, SETTING_HEIGHT, 200);
 	obs_data_set_default_int(settings, SETTING_COLOR, 0xFFFFFF);
-	obs_data_set_default_int(settings, SETTING_COLOR2, 0x00FF00);
-	obs_data_set_default_bool(settings, SETTING_GRADIENT_ENABLE, false);
-	obs_data_set_default_int(settings, SETTING_MODE, 0);
+
+	obs_data_set_default_int(settings, SETTING_SHAPE, AUDIO_WAVE_SHAPE_LINE);
+	obs_data_set_default_int(settings, SETTING_STYLE, AUDIO_WAVE_STYLE_WAVE_LINE);
+
 	obs_data_set_default_int(settings, SETTING_AMPLITUDE, 200);
+	obs_data_set_default_int(settings, SETTING_CURVE, 100);
 	obs_data_set_default_bool(settings, SETTING_MIRROR, false);
-	obs_data_set_default_int(settings, SETTING_FRAME_RADIUS, 0);
 	obs_data_set_default_int(settings, SETTING_FRAME_DENSITY, 100);
 }
-
-/* ------------------------------------------------------------------------- */
-/* Source lifecycle                                                          */
-/* ------------------------------------------------------------------------- */
 
 static void audio_wave_update(void *data, obs_data_t *settings)
 {
@@ -710,20 +708,30 @@ static void audio_wave_update(void *data, obs_data_t *settings)
 	s->width = (int)obs_data_get_int(settings, SETTING_WIDTH);
 	s->height = (int)obs_data_get_int(settings, SETTING_HEIGHT);
 	s->color = (uint32_t)obs_data_get_int(settings, SETTING_COLOR);
-	s->color2 = (uint32_t)obs_data_get_int(settings, SETTING_COLOR2);
-	s->mode = (int)obs_data_get_int(settings, SETTING_MODE);
-	s->use_gradient = obs_data_get_bool(settings, SETTING_GRADIENT_ENABLE);
+
+	s->shape = (int)obs_data_get_int(settings, SETTING_SHAPE);
+	s->style = (int)obs_data_get_int(settings, SETTING_STYLE);
+
+	if (s->shape < AUDIO_WAVE_SHAPE_LINE || s->shape > AUDIO_WAVE_SHAPE_DIAMOND)
+		s->shape = AUDIO_WAVE_SHAPE_LINE;
+	if (s->style < AUDIO_WAVE_STYLE_WAVE_LINE || s->style > AUDIO_WAVE_STYLE_WAVE_LINEAR_FILLED)
+		s->style = AUDIO_WAVE_STYLE_WAVE_LINE;
+
 	s->mirror = obs_data_get_bool(settings, SETTING_MIRROR);
 
-	s->frame_radius = (int)obs_data_get_int(settings, SETTING_FRAME_RADIUS);
 	s->frame_density = (int)obs_data_get_int(settings, SETTING_FRAME_DENSITY);
+	if (s->frame_density < 10)
+		s->frame_density = 10;
+	if (s->frame_density > 300)
+		s->frame_density = 300;
 
 	int amp_pct = (int)obs_data_get_int(settings, SETTING_AMPLITUDE);
-	if (amp_pct < 10)
-		amp_pct = 10;
-	if (amp_pct > 400)
-		amp_pct = 400;
+	amp_pct = std::clamp(amp_pct, 10, 400);
 	s->gain = (float)amp_pct / 100.0f;
+
+	int curve_pct = (int)obs_data_get_int(settings, SETTING_CURVE);
+	curve_pct = std::clamp(curve_pct, 20, 300);
+	s->curve_power = (float)curve_pct / 100.0f;
 
 	if (s->width < 1)
 		s->width = 1;
@@ -752,6 +760,15 @@ static void audio_wave_destroy(void *data)
 		return;
 
 	detach_from_audio_source(s);
+
+	{
+		std::lock_guard<std::mutex> lock(s->audio_mutex);
+		s->samples_left.clear();
+		s->samples_right.clear();
+		s->wave.clear();
+		s->num_samples = 0;
+	}
+
 	delete s;
 }
 
@@ -786,10 +803,6 @@ static uint32_t audio_wave_get_height(void *data)
 	return s ? (uint32_t)s->height : 0;
 }
 
-/* ------------------------------------------------------------------------- */
-/* Render                                                                    */
-/* ------------------------------------------------------------------------- */
-
 static void audio_wave_video_render(void *data, gs_effect_t *effect)
 {
 	UNUSED_PARAMETER(effect);
@@ -820,10 +833,6 @@ static const char *audio_wave_get_name(void *)
 {
 	return kSourceName;
 }
-
-/* ------------------------------------------------------------------------- */
-/* Registration                                                              */
-/* ------------------------------------------------------------------------- */
 
 extern "C" void register_audio_wave_source(void)
 {
