@@ -2,6 +2,7 @@
 param(
     [ValidateSet('x64')]
     [string] $Target = 'x64',
+
     [ValidateSet('Debug', 'RelWithDebInfo', 'Release', 'MinSizeRel')]
     [string] $Configuration = 'RelWithDebInfo'
 )
@@ -9,7 +10,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ( $DebugPreference -eq 'Continue' ) {
-    $VerbosePreference = 'Continue'
+    $VerbosePreference     = 'Continue'
     $InformationPreference = 'Continue'
 }
 
@@ -17,7 +18,7 @@ if ( $env:CI -eq $null ) {
     throw "Package-Windows.ps1 requires CI environment"
 }
 
-if ( ! ( [System.Environment]::Is64BitOperatingSystem ) ) {
+if ( -not [System.Environment]::Is64BitOperatingSystem ) {
     throw "Packaging script requires a 64-bit system to build and run."
 }
 
@@ -32,41 +33,63 @@ function Package {
         exit 2
     }
 
-    $ScriptHome = $PSScriptRoot
+    $ScriptHome  = $PSScriptRoot
     $ProjectRoot = Resolve-Path -Path "$PSScriptRoot/../.."
-    $BuildSpecFile = "${ProjectRoot}/buildspec.json"
 
-    $UtilityFunctions = Get-ChildItem -Path $PSScriptRoot/utils.pwsh/*.ps1 -Recurse
-
-    foreach( $Utility in $UtilityFunctions ) {
+    # Load helper functions for Log-Group
+    $UtilityFunctions = Get-ChildItem -Path "$ScriptHome/utils.pwsh/*.ps1" -Recurse
+    foreach ($Utility in $UtilityFunctions) {
         Write-Debug "Loading $($Utility.FullName)"
         . $Utility.FullName
     }
 
-    $BuildSpec = Get-Content -Path ${BuildSpecFile} -Raw | ConvertFrom-Json
-    $ProductName = $BuildSpec.name
+    $BuildSpecFile = Join-Path $ProjectRoot "buildspec.json"
+    if (-not (Test-Path $BuildSpecFile)) {
+        throw "Buildspec not found at ${BuildSpecFile}"
+    }
+
+    $BuildSpec      = Get-Content -Path $BuildSpecFile -Raw | ConvertFrom-Json
+    $ProductName    = $BuildSpec.name
     $ProductVersion = $BuildSpec.version
+
+    if (-not $ProductName -or -not $ProductVersion) {
+        throw "buildspec.json must contain 'name' and 'version'."
+    }
 
     $OutputName = "${ProductName}-${ProductVersion}-windows-${Target}"
 
+    # Clean old zips (keep installers)
     $RemoveArgs = @{
         ErrorAction = 'SilentlyContinue'
-        Path = @(
+        Path        = @(
             "${ProjectRoot}/release/${ProductName}-*-windows-*.zip"
         )
     }
-
     Remove-Item @RemoveArgs
 
-    Log-Group "Archiving ${ProductName}..."
-    $CompressArgs = @{
-        Path = (Get-ChildItem -Path "${ProjectRoot}/release/${Configuration}" -Exclude "${OutputName}*.*")
-        CompressionLevel = 'Optimal'
-        DestinationPath = "${ProjectRoot}/release/${OutputName}.zip"
-        Verbose = ($Env:CI -ne $null)
+    $ReleaseConfigDir = Join-Path $ProjectRoot "release/${Configuration}"
+    if (-not (Test-Path $ReleaseConfigDir)) {
+        throw "Release directory not found: ${ReleaseConfigDir}. Did you run Build-Windows.ps1 first?"
     }
+
+    Log-Group "Archiving ${ProductName} (ZIP)..."
+
+    $ZipPath = "${ProjectRoot}/release/${OutputName}.zip"
+
+    $CompressArgs = @{
+        Path             = (Get-ChildItem -Path $ReleaseConfigDir -Exclude "${OutputName}*.*")
+        CompressionLevel = 'Optimal'
+        DestinationPath  = $ZipPath
+        Verbose          = ($Env:CI -ne $null)
+    }
+
     Compress-Archive -Force @CompressArgs
+
     Log-Group
+
+    Write-Host "Packaging complete:"
+    Write-Host "  - ZIP: $ZipPath"
+    Write-Host "  - Installer (already built in Build step, if NSIS was available)"
 }
 
 Package

@@ -2,15 +2,6 @@ cmake_minimum_required(VERSION 3.28...3.30)
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake" NO_POLICY_SCOPE)
 
-# Fallbacks if not provided by buildspec/bootstrap
-if(NOT DEFINED _name)
-  set(_name "audio-wave")
-endif()
-
-if(NOT DEFINED _version)
-  set(_version "0.1.0")
-endif()
-
 project(${_name} VERSION ${_version} LANGUAGES C CXX)
 
 # ---------------------------------------------------------------------------
