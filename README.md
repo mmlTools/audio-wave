@@ -16,6 +16,18 @@ Perfect for:
 
 ---
 
+## ❤️ Support the Project  
+
+If you want to support the development of my future OBS tools:
+
+**Lower Thirds Shop** https://ko-fi.com/mmltech/shop
+**Ko-fi:** https://ko-fi.com/mmltech  
+**PayPal:** https://paypal.me/mmlTools  
+
+Your help keeps the project alive.
+
+---
+
 ## ✨ Features
 
 - 🎧 **Attach to any audio source**  
@@ -171,13 +183,6 @@ If enabled:
 **Performance issues**
 - Reduce **Shape Density (%)** if you’re using complex shapes with very high density.  
 - Lower the internal **Width/Height** if you set them very high.
-
----
-
-## 📝 License & Contributions
-
-- License: _Add your license info here (e.g., MIT, GPL, etc.)_  
-- Contributions, bug reports, and feature suggestions are welcome via issues or pull requests in the repository.
 
 ---
 
