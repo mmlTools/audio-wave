@@ -1,71 +1,56 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>Audio Wave Visualizer for OBS Studio - User Guide</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta
-      name="description"
-      content="Simple, lightweight audio wave visualizer source for OBS Studio. Learn how to install it, add it to your scene, and customize the look of the wave or bars."
-    />
-    <link rel="stylesheet" href="assets/css/style.css" />
+
+<head>
+  <meta charset="UTF-8" />
+  <title>Audio Wave Visualizer for OBS Studio - User Guide</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description"
+    content="Simple, lightweight audio wave visualizer source for OBS Studio. Learn how to install it, add it to your scene, and customize shapes, styles, amplitude, and curve power." />
+  <link rel="stylesheet" href="assets/css/style.css" />
   </head>
-  <body>
-    <header class="site-header">
-      <div class="site-header-inner">
-        <h1>Audio Wave Visualizer for OBS Studio</h1>
-        <p class="tagline">
-          A simple, lightweight audio-reactive wave or bar visual for your
-          scenes.
+
+<body>
+  <header class="site-header">
+    <div class="site-header-inner">
+      <h1>Audio Wave Visualizer for OBS Studio</h1>
+      <p class="tagline">
+        A simple, lightweight audio-reactive visual for your scenes – with
+        waves, bars, and geometric shapes.
         </p>
         <div class="cta-row">
-          <a
-            class="btn btn-ko-fi"
-            href="https://ko-fi.com/mmltech"
-            target="_blank"
-            rel="noopener"
-          >
-            ☕ Support on Ko-fi
-          </a>
-          <a
-            class="btn btn-paypal"
-            href="https://paypal.me/mmltools"
-            target="_blank"
-            rel="noopener"
-          >
-            💳 Support via PayPal
-          </a>
-          <a
-            class="btn btn-github"
-            href="https://github.com/mmlTools/obs-audio-wave-visualizer"
-            target="_blank"
-            rel="noopener"
-          >
-            &lt;/&gt; Star &amp; Fork on GitHub
-          </a>
-          <a
-            class="btn btn-download"
-            href="https://github.com/mmlTools/obs-audio-wave-visualizer"
-            target="_blank"
-            rel="noopener"
-          >
-            Download Latest Release
-          </a>
+        <a class="btn btn-ko-fi" href="https://ko-fi.com/mmltech" target="_blank" rel="noopener">
+          ☕ Support on Ko-fi
+        </a>
+        <a class="btn btn-paypal" href="https://paypal.me/mmltools" target="_blank" rel="noopener">
+          💳 Support via PayPal
+        </a>
+        <a class="btn btn-github" href="https://github.com/mmlTools/obs-audio-wave-visualizer" target="_blank" rel="noopener">
+          &lt;/&gt; Star &amp; Fork on GitHub
+        </a>
+        <a class="btn btn-download" href="https://github.com/mmlTools/obs-audio-wave-visualizer" target="_blank" rel="noopener">
+          Download Latest Release
+        </a>
         </div>
-      </div>
-    </header>
+        </div>
+        </header>
 
-    <main class="page">
-      <section id="intro" class="section">
-        <div class="intro-layout">
-          <div class="intro-copy">
-            <h2>What this plugin does</h2>
+  <main class="page">
+    <section id="intro" class="section">
+      <div class="intro-layout">
+        <div class="intro-copy">
+          <h2>What this plugin does</h2>
+          <p>
+            This plugin adds a new source type to OBS Studio:
+            <strong>&ldquo;Audio Wave (Simple)&rdquo;</strong>. It listens to
+            any audio source you choose (microphone, desktop audio, music
+            player, etc.) and draws a clean visual that reacts to the sound.
+            </p>
             <p>
-              This plugin adds a new source type to OBS Studio:
-              <strong>&ldquo;Audio Wave (Simple)&rdquo;</strong>. It listens to
-              any audio source you choose (microphone, desktop audio, music
-              player, etc.) and draws a clean, minimal wave or a set of bars
-              that react to the sound.
+              You can render a classic horizontal waveform or wrap the audio
+              around <strong>shapes</strong> like circles, rectangles, hexagons,
+              stars, triangles, or diamonds using different
+              <strong>styles</strong> such as lines, bars, or filled waves.
             </p>
             <p>
               It is designed for creators who want a
@@ -73,269 +58,330 @@
               setup, scripting, or external programs.
             </p>
             <p>
-              Quick Note! Add a touch of style to your profile frame by adding
-              the wave visualizer on top and link it to your microphone or
-              desktop audio source.
+            Quick Note! Add a touch of style to your profile frame by dropping
+            the wave or shape visualizer on top and linking it to your
+            microphone or desktop audio source.
             </p>
-          </div>
+            </div>
 
-          <figure class="intro-visual">
-            <img
-              src="assets/img/Screenshot_3.png"
-              alt="Audio Wave Visualizer example overlay reacting to sound"
-            />
-            <figcaption>
-              A minimal audio-reactive wave you can drop into any scene layout.
+        <figure class="intro-visual">
+          <img src="assets/img/preview.png"
+            alt="Audio Wave (Simple) visualizer example overlay with shapes and wave styles reacting to sound" />
+          <figcaption>
+            A minimal audio-reactive visual you can drop into any scene
+            layout.
             </figcaption>
-          </figure>
-        </div>
-      </section>
-      <section id="quick-start" class="section">
-        <h2>Quick start</h2>
-        <ol class="steps">
-          <li>
-            <h3>1. Install the plugin</h3>
-            <p>
-              Copy the plugin files into the correct OBS Studio
-              <code>obs-plugins</code> folder for your operating system, then
-              restart OBS Studio.
-            </p>
-
-            <ul>
-              <li>
-                <strong>Windows:</strong><br />
-                Place the plugin folder in:<br />
-                <code>C:\Program Files\obs-studio\obs-plugins\64bit</code><br />
-                If you use the portable version, place it inside:<br />
-                <code>obs-studio-portable\obs-plugins\64bit</code>
-              </li>
-
-              <li>
-                <strong>macOS:</strong><br />
-                Right-click <em>OBS.app</em> → “Show Package Contents”, then
-                copy the plugin into:<br />
-                <code>OBS.app/Contents/PlugIns</code>
-              </li>
-
-              <li>
-                <strong>Linux:</strong><br />
-                System-wide installation:<br />
-                <code>/usr/lib/obs-plugins</code><br />
-                or on some distros:<br />
-                <code>/usr/lib/x86_64-linux-gnu/obs-plugins</code><br />
-                <br />
-                Flatpak version (user install):<br />
-                <code
-                  >~/.var/app/com.obsproject.Studio/config/obs-studio/plugins/</code
-                >
-              </li>
-            </ul>
-          </li>
-          <li>
-            <h3>2. Add the &ldquo;Audio Wave (Simple)&rdquo; source</h3>
-            <p>
-              In the <strong>Sources</strong> list of your scene, click the
-              <span class="pill">+</span> button and choose
-              <strong>Audio Wave (Simple)</strong> from the list.
-            </p>
-            <figure class="screenshot">
-              <img
-                src="assets/img/Screenshot_1.png"
-                alt="Adding the Audio Wave (Simple) source in OBS Studio"
-              />
-              <figcaption>
-                Click the <strong>+</strong> under Sources and select
-                <strong>Audio Wave (Simple)</strong>. Arrows in the screenshot
-                point to the right item in the list.
-              </figcaption>
             </figure>
-          </li>
-          <li>
-            <h3>3. Pick the audio source you want to visualize</h3>
-            <p>
-              When the Properties window appears, use the
-              <strong>Audio Source</strong> dropdown to choose which audio input
-              you want the visualizer to react to. This can be your microphone,
-              your game, your music, or any other active audio source in the
-              scene.
-            </p>
-            <figure class="screenshot">
-              <img
-                src="assets/img/Screenshot_2.png"
-                alt="Initial blank setup of the Audio Wave (Simple) source"
-              />
-              <figcaption>
-                Initial properties window with a blank setup. Just pick your
-                preferred audio source.
-              </figcaption>
-            </figure>
-          </li>
-          <li>
-            <h3>4. Adjust the look to match your overlay</h3>
-            <p>
-              Use the options in the Properties window to change
-              <strong>Display Mode</strong> (wave or bars),
-              <strong>colors</strong>, <strong>size</strong>, and
-              <strong>amplitude</strong> until it fits your overlay style.
-            </p>
-            <figure class="screenshot">
-              <img
-                src="assets/img/Screenshot_3.png"
-                alt="Audio Wave (Simple) properties with customized settings"
-              />
-              <figcaption>
-                Example setup with colors, amplitude, and mirroring adjusted for
-                a more dynamic look.
-              </figcaption>
-            </figure>
-          </li>
-        </ol>
-      </section>
+            </div>
+            </section>
 
-      <section id="controls" class="section section-cards">
-        <h2>Controls explained (in plain language)</h2>
-        <div class="card-grid">
-          <article class="card">
-            <h3>Audio Source</h3>
-            <p>
-              This tells the plugin <strong>which sound to listen to</strong>.
-              Choose any existing source in your scene that has audio (like your
-              microphone or desktop audio). If nothing moves, double-check that:
-            </p>
-            <ul>
-              <li>The chosen source is not muted.</li>
-              <li>There is actual sound on that source.</li>
-            </ul>
-          </article>
+    <section id="quick-start" class="section">
+      <h2>Quick start</h2>
+      <ol class="steps">
+        <li>
+          <h3>1. Install the plugin</h3>
+          <p>
+            Copy the plugin files into the correct OBS Studio
+            <code>obs-plugins</code> folder for your operating system, then
+            restart OBS Studio.
+          </p>
 
-          <article class="card">
-            <h3>Display Mode</h3>
-            <p>Choose how the visual looks:</p>
-            <ul>
-              <li>
-                <strong>Wave</strong> - a smooth line that moves with the audio.
+          <ul>
+            <li>
+              <strong>Windows:</strong><br />
+              Place the plugin folder in:<br />
+              <code>C:\Program Files\obs-studio\obs-plugins\64bit</code><br />
+              If you use the portable version, place it inside:<br />
+              <code>obs-studio-portable\obs-plugins\64bit</code>
+            </li>
+
+            <li>
+              <strong>macOS:</strong><br />
+              Right-click <em>OBS.app</em> → “Show Package Contents”, then
+              copy the plugin into:<br />
+              <code>OBS.app/Contents/PlugIns</code>
+            </li>
+
+            <li>
+              <strong>Linux:</strong><br />
+              System-wide installation:<br />
+              <code>/usr/lib/obs-plugins</code><br />
+              or on some distros:<br />
+              <code>/usr/lib/x86_64-linux-gnu/obs-plugins</code><br />
+              <br />
+              Flatpak version (user install):<br />
+              <code>~/.var/app/com.obsproject.Studio/config/obs-studio/plugins/</code>
+              </li>
+              </ul>
               </li>
               <li>
-                <strong>Bars</strong> - vertical sticks that grow and shrink
-                with the sound.
-              </li>
-            </ul>
-          </article>
-
-          <article class="card">
-            <h3>Wave Color &amp; Gradient</h3>
-            <p>
-              <strong>Wave Color</strong> is the main color used to draw the
-              line or bars. If you enable <strong>Use Gradient</strong>, you can
-              pick a second color (<strong>Wave Color 2</strong>) and the plugin
-              will blend between the two across the width of the visual.
-            </p>
-          </article>
-
-          <article class="card">
-            <h3>Width &amp; Height</h3>
-            <p>
-              These define the <strong>resolution</strong> of the visualizer in
-              pixels. You can still scale the source directly in the preview
-              like any other source, but:
-            </p>
-            <ul>
-              <li>
-                Use a wider value (e.g. 800-1200) for a long bar under your
+                <h3>2. Add the &ldquo;Audio Wave (Simple)&rdquo; source</h3>
+                <p>
+                  In the <strong>Sources</strong> list of your scene, click the
+                  <span class="pill">+</span> button and choose
+                  <strong>Audio Wave (Simple)</strong> from the list.
+                </p>
+                <figure class="screenshot">
+            <img src="assets/img/Screenshot_1.png" alt="Adding the Audio Wave (Simple) source in OBS Studio" />
+            <figcaption>
+              Click the <strong>+</strong> under Sources and select
+              <strong>Audio Wave (Simple)</strong>. Arrows in the screenshot
+              point to the right item in the list.
+            </figcaption>
+            </figure>
+            </li>
+            <li>
+              <h3>3. Pick the audio source you want to visualize</h3>
+              <p>
+                When the Properties window appears, use the
+                <strong>Audio Source</strong> dropdown to choose which audio input
+                you want the visualizer to react to. This can be your microphone,
+                your game, your music, or any other active audio source in the
                 scene.
+              </p>
+              <figure class="screenshot">
+            <img src="assets/img/Screenshot_2.png" alt="Initial blank setup of the Audio Wave (Simple) source" />
+            <figcaption>
+              Initial properties window with a blank setup. Just pick your
+              preferred audio source.
+            </figcaption>
+            </figure>
+            </li>
+            <li>
+              <h3>4. Adjust the look to match your overlay</h3>
+              <p>
+                Use the options in the Properties window to change
+            <strong>Shape</strong>, <strong>Style</strong>,
+            <strong>Wave Color</strong>, <strong>Width</strong>,
+            <strong>Height</strong>, <strong>Amplitude (%)</strong>,
+            <strong>Curve Power (%)</strong>,
+            <strong>Shape Density (%)</strong>, and
+            <strong>Mirror wave horizontally</strong> until it fits your
+            overlay style.
+            </p>
+            <figure class="screenshot">
+            <img src="assets/img/Screenshot_3.png"
+              alt="Audio Wave (Simple) properties with shapes, styles, amplitude and curve power options" />
+            <figcaption>
+              Example setup with Shape, Style, colors, amplitude, curve power,
+              and mirroring adjusted for a more dynamic look.
+              </figcaption>
+              </figure>
+              </li>
+              </ol>
+              </section>
+
+    <section id="controls" class="section section-cards">
+      <h2>Controls explained (in plain language)</h2>
+      <div class="card-grid">
+        <article class="card">
+          <h3>Audio Source</h3>
+          <p>
+            This tells the plugin <strong>which sound to listen to</strong>.
+            Choose any existing source in your scene that has audio (like your
+            microphone or desktop audio). If nothing moves, double-check that:
+          </p>
+          <ul>
+            <li>The chosen source is not muted.</li>
+            <li>There is actual sound on that source.</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>Shape &amp; Style</h3>
+          <p>
+            These two options define the <strong>overall look</strong> of your
+            visualizer.
+          </p>
+          <ul>
+            <li>
+              <strong>Shape</strong> – choose where the audio is drawn:
+              <em>Line (Horizontal), Rectangle, Circle, Hexagon, Star,
+                Triangle, Diamond</em>.
               </li>
               <li>
-                Use a smaller value (e.g. 300-500) if you only need a small
-                accent.
+              <strong>Style</strong> – choose how it is drawn:
+              <em>Wave (Line), Wave (Bars), Wave (Linear Smooth), Wave (Linear
+                Filled)</em>.
               </li>
-            </ul>
-          </article>
+              </ul>
+          <p>
+            For a classic oscilloscope look, use
+            <strong>Line + Wave (Line)</strong>. For logo-style rings, try
+            <strong>Circle + Wave (Bars)</strong> or
+            <strong>Circle + Wave (Linear Filled)</strong>.
+          </p>
+        </article>
 
-          <article class="card">
-            <h3>Amplitude (%)</h3>
-            <p>
-              Think of this as the <strong>visual sensitivity</strong>. Higher
-              values make the wave or bars move more for the same audio level.
+        <article class="card">
+          <h3>Wave Color</h3>
+          <p>
+            This is the main color used to draw the line, bars, or filled
+            wave. Pick a color that matches your overlay or brand.
             </p>
-            <ul>
-              <li><strong>100%</strong> - 1:1 movement.</li>
-              <li><strong>200%</strong> - more reactive.</li>
-              <li><strong>300-400%</strong> - very bouncy for quiet audio.</li>
-            </ul>
-          </article>
+            </article>
 
-          <article class="card">
-            <h3>Mirror wave horizontally</h3>
-            <p>
-              When enabled, the plugin draws a
-              <strong>second, mirrored copy</strong> of the wave or bars below
-              the center line. This gives you a symmetrical, &ldquo;audio
-              tunnel&rdquo; style visual.
+        <article class="card">
+          <h3>Width &amp; Height</h3>
+          <p>
+            These define the <strong>resolution</strong> of the visualizer in
+            pixels. You can still scale the source directly in the preview
+            like any other source, but:
+          </p>
+          <ul>
+            <li>
+              Use a wider value (e.g. 800–1200) for a long bar under your
+              scene.
+              </li>
+              <li>
+              Use a smaller value (e.g. 300–500) if you only need a small
+              accent.
+              </li>
+              </ul>
+              </article>
+
+        <article class="card">
+          <h3>Amplitude (%)</h3>
+          <p>
+            Think of this as the <strong>visual sensitivity</strong>. Higher
+            values make the wave or bars move more for the same audio level.
+          </p>
+          <ul>
+            <li><strong>100%</strong> – 1:1 movement.</li>
+            <li><strong>200%</strong> – more reactive.</li>
+            <li><strong>300–400%</strong> – very bouncy for quiet audio.</li>
+            </ul>
+            </article>
+            
+            <article class="card">
+              <h3>Curve Power (%)</h3>
+              <p>
+                This adjusts how the visual reacts to quiet vs loud sounds. It
+                shapes the response curve of the waveform.
+              </p>
+              <ul>
+                <li>
+                  Lower values – more even reaction across the volume range.
+                </li>
+                <li>
+                  Higher values – quiet sounds stay subtle, loud sounds hit much
+                  harder visually.
+                </li>
+              </ul>
+            </article>
+            
+            <article class="card">
+              <h3>Shape Density (%)</h3>
+              <p>
+                Controls how many <strong>bars/segments</strong> are drawn around
+                shapes.
+              </p>
+              <ul>
+                <li>Lower values – fewer, chunkier bars.</li>
+                <li>Higher values – smoother, more detailed outline.</li>
+              </ul>
+          <p>
+            If performance is an issue, try lowering this value a bit,
+            especially on complex shapes.
+          </p>
+        </article>
+
+        <article class="card">
+          <h3>Mirror wave horizontally</h3>
+          <p>
+            When enabled, the plugin draws a
+            <strong>second, mirrored copy</strong> of the wave or bars on the
+            opposite side.
             </p>
-          </article>
+          <ul>
+            <li>
+              For the Line shape, it mirrors above and below the center line.
+            </li>
+            <li>
+              For shapes, it draws bars both inward and outward, giving a more
+              symmetrical look.
+            </li>
+          </ul>
+        </article>
         </div>
-      </section>
+        </section>
 
-      <section id="ideas" class="section">
-        <h2>Ideas &amp; use cases</h2>
-        <ul class="ideas-list">
-          <li>
-            <strong>Subtle mic indicator</strong> - Place a thin wave under your
-            webcam so viewers can see that your mic is active.
+    <section id="ideas" class="section">
+      <h2>Ideas &amp; use cases</h2>
+      <ul class="ideas-list">
+        <li>
+          <strong>Subtle mic indicator</strong> – Place a thin line wave under
+          your webcam so viewers can see that your mic is active.
           </li>
           <li>
-            <strong>Music visual for &ldquo;Just Chatting&rdquo;</strong> - Put
-            a small bar visual near your &ldquo;Now Playing&rdquo; text.
+          <strong>Music visual for &ldquo;Just Chatting&rdquo;</strong> – Put
+          a small bar visual near your &ldquo;Now Playing&rdquo; text.
           </li>
           <li>
-            <strong>Scene transition accent</strong> - Add the wave to a stinger
+          <strong>Logo ring</strong> – Use a Circle shape around your logo
+          with Wave (Linear Filled) for a clean idle screen.
+          </li>
+          <li>
+            <strong>Scene transition accent</strong> – Add the wave to a stinger
             or transition scene as an audio-reactive line.
           </li>
           <li>
-            <strong>Podcast or interview layout</strong> - Show separate visuals
-            for each guest microphone by adding multiple sources.
+          <strong>Podcast or interview layout</strong> – Show separate
+          visuals for each guest microphone by adding multiple sources.
           </li>
-        </ul>
-      </section>
+          </ul>
+          </section>
 
-      <section id="troubleshooting" class="section">
-        <h2>Troubleshooting</h2>
-        <div class="faq">
-          <details>
-            <summary>The wave is completely flat. Nothing moves.</summary>
-            <ul>
-              <li>
-                Check that you picked the correct
-                <strong>Audio Source</strong> in the properties.
-              </li>
-              <li>Make sure that source is not muted in the OBS mixer.</li>
-              <li>
-                Play some audio or speak into the mic and look for levels in the
-                mixer.
-              </li>
-            </ul>
-          </details>
-          <details>
-            <summary>The visual moves, but it is too small or too big.</summary>
-            <p>
-              Use the <strong>Amplitude (%)</strong> slider. Lower it if the
-              visual is too wild, or increase it if it hardly moves.
+    <section id="troubleshooting" class="section">
+      <h2>Troubleshooting</h2>
+      <div class="faq">
+        <details>
+          <summary>The wave is completely flat. Nothing moves.</summary>
+          <ul>
+            <li>
+              Check that you picked the correct
+              <strong>Audio Source</strong> in the properties.
+            </li>
+            <li>Make sure that source is not muted in the OBS mixer.</li>
+            <li>
+              Play some audio or speak into the mic and look for levels in the
+              mixer.
+            </li>
+          </ul>
+        </details>
+        <details>
+          <summary>The visual moves, but it is too small or too big.</summary>
+          <p>
+            Use the <strong>Amplitude (%)</strong> slider. Lower it if the
+            visual is too wild, or increase it if it hardly moves. You can
+            also tweak <strong>Curve Power (%)</strong> to change how strongly
+            loud parts of the audio are emphasized.
             </p>
-          </details>
-          <details>
-            <summary>The wave looks pixelated when I scale it.</summary>
-            <p>
-              Increase the <strong>Width</strong> and
-              <strong>Height</strong> values in the properties. Then resize the
-              source in the preview to fit your layout.
-            </p>
-          </details>
-        </div>
+            </details>
+            <details>
+              <summary>The wave looks pixelated when I scale it.</summary>
+              <p>
+                Increase the <strong>Width</strong> and
+                <strong>Height</strong> values in the properties. Then resize the
+                source in the preview to fit your layout.
+              </p>
+            </details>
+        <details>
+          <summary>The shape outline looks too sparse or too dense.</summary>
+          <p>
+            Adjust <strong>Shape Density (%)</strong>. Lower values give fewer
+            bars and a lighter look, higher values give a smoother, more
+            continuous outline. If you notice performance drops, try reducing
+            this value slightly.
+          </p>
+        </details>
+      </div>
       </section>
-    </main>
+      </main>
 
-    <footer class="site-footer">
-      <p>Audio Wave Visualizer for OBS Studio - simple, clean, and reactive.</p>
-    </footer>
+  <footer class="site-footer">
+    <p>Audio Wave Visualizer for OBS Studio - simple, clean, and reactive.</p>
+  </footer>
   </body>
+
 </html>

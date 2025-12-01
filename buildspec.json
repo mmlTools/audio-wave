@@ -37,9 +37,9 @@
         }
     },
     "name": "audio-wave",
-    "displayName": "Audio Wave for OBS",
-    "version": "1.0.0",
-    "author": "MML Tech",
+    "displayName": "Create audio waves out of any audio source",
+    "version": "1.1.2",
+    "author": "MMLTech",
     "website": "https://ko-fi.com/mmltech",
     "email": "contact@obscountdown.com"
 }
