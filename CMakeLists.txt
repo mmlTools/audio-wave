@@ -100,6 +100,8 @@ set(OBS_AUDIO_WAVE_SRC
   ${AW_THM_DIR}/theme-musicmagic.cpp
   ${AW_THM_DIR}/theme-magicsquare.cpp
   ${AW_THM_DIR}/theme-cartoonframe.cpp
+  ${AW_THM_DIR}/theme-lightning.cpp
+  ${AW_THM_DIR}/theme-rounded-bars.cpp
 )
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${OBS_AUDIO_WAVE_SRC})

@@ -13,6 +13,8 @@
 #include "theme-musicmagic.hpp"
 #include "theme-magicsquare.hpp"
 #include "theme-cartoonframe.hpp"
+#include "theme-lightning.hpp"
+#include "theme-rounded-bars.hpp"
 
 static bool g_themes_registered = false;
 
@@ -36,4 +38,6 @@ void audio_wave_register_builtin_themes()
 	audio_wave_register_musicmagic_theme();
 	audio_wave_register_magicsquare_theme();
 	audio_wave_register_cartoonframe_theme();
+	audio_wave_register_lightning_theme();
+	audio_wave_register_rounded_bars_theme();
 }
