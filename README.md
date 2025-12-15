@@ -30,7 +30,7 @@ For a full explanation of every setting and theme, visit the detailed guide:
 ## 🧩 Installation (Manual)
 
 1. Download the latest release from GitHub:  
-   👉 https://github.com/mmlTools/obs-audio-wave-visualizer/releases
+   👉 https://github.com/mmlTools/audio-wave/releases
 
 2. Extract the archive and place the plugin file(s) as follows:
 
