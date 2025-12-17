@@ -123,8 +123,7 @@ static void line_theme_update(audio_wave_source *s, obs_data_t *settings)
 	d->initialized = false;
 }
 
-static inline size_t sample_index_for_x(const audio_wave_source *s, const line_theme_data *d, uint32_t x,
-					uint32_t width_u, size_t frames)
+static inline size_t sample_index_for_x(const line_theme_data *d, uint32_t x, uint32_t width_u, size_t frames)
 {
 	if (width_u <= 1 || frames <= 1)
 		return 0;
@@ -279,7 +278,7 @@ static void draw_line_filled(audio_wave_source *s, gs_eparam_t *color_param)
 
 	std::vector<float> amp(width_u);
 	for (uint32_t x = 0; x < width_u; ++x) {
-		const size_t idx = sample_index_for_x(s, d, x, width_u, frames);
+		const size_t idx = sample_index_for_x(d, x, width_u, frames);
 		amp[x] = (idx < frames) ? s->wave[idx] : 0.0f;
 	}
 
