@@ -13,30 +13,17 @@
 
 static const char *kSourceId = "audio_wave_source";
 static const char *kSourceName = "Audio Wave";
-
-// Local setting keys
 static const char *SETTING_AUDIO_SOURCE = "audio_source";
 static const char *SETTING_WIDTH = "width";
 static const char *SETTING_HEIGHT = "height";
+static const char *SETTING_INSET = "inset_ratio"; // NEW: global inset
 static const char *SETTING_AMPLITUDE = "amplitude";
 static const char *SETTING_FRAME_DENSITY = "frame_density";
 static const char *SETTING_CURVE = "curve_power";
 static const char *SETTING_THEME = AW_SETTING_THEME;
-
-// Property ids
 static const char *PROP_THEME_GROUP = "theme_group";
-
 static struct obs_source_info audio_wave_source_info;
-
-#ifndef UNUSED_PARAMETER
-#define UNUSED_PARAMETER(x) (void)(x)
-#endif
-
-// ─────────────────────────────────────────────
-// Theme registry implementation
-// ─────────────────────────────────────────────
 static std::vector<const audio_wave_theme *> g_themes;
-static bool g_themes_registered = false;
 
 void audio_wave_register_theme(const audio_wave_theme *theme)
 {
@@ -249,6 +236,10 @@ static void detach_from_audio_source(audio_wave_source *s)
 // Properties / UI
 // ─────────────────────────────────────────────
 
+#ifndef UNUSED_PARAMETER
+#define UNUSED_PARAMETER(x) (void)(x)
+#endif
+
 static void clear_properties(obs_properties_t *props)
 {
 	if (!props)
@@ -256,7 +247,6 @@ static void clear_properties(obs_properties_t *props)
 
 	obs_property_t *p = obs_properties_first(props);
 	while (p) {
-		// Advance pointer using OBS API
 		obs_property_t *next = p;
 		if (!obs_property_next(&next)) {
 			next = nullptr;
@@ -285,14 +275,11 @@ static bool on_theme_modified(obs_properties_t *props, obs_property_t *property,
 	if (!group)
 		return true;
 
-	// Clear previous theme-specific props
 	clear_properties(group);
 
-	// Determine selected theme
 	const char *theme_id = settings ? obs_data_get_string(settings, SETTING_THEME) : nullptr;
 	const audio_wave_theme *theme = audio_wave_find_theme(theme_id);
 
-	// Let theme populate its properties (styles, colors, mirror, etc.)
 	if (theme && theme->add_properties)
 		theme->add_properties(group);
 
@@ -307,20 +294,20 @@ static obs_properties_t *audio_wave_get_properties(void *data)
 
 	obs_properties_t *props = obs_properties_create();
 
-	// Audio source
 	obs_property_t *p_list = obs_properties_add_list(props, SETTING_AUDIO_SOURCE, "Audio Source",
 							 OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 	obs_enum_sources(enum_audio_sources, p_list);
 
-	// Core visual settings
 	obs_properties_add_int(props, SETTING_WIDTH, "Width", 64, 4096, 1);
 	obs_properties_add_int(props, SETTING_HEIGHT, "Height", 32, 2048, 1);
+
+	// NEW: global inset, applies to ALL themes via render transform
+	obs_properties_add_float_slider(props, SETTING_INSET, "Inset (relative to canvas)", 0.0, 0.4, 0.01);
 
 	obs_properties_add_int_slider(props, SETTING_AMPLITUDE, "Amplitude (%)", 10, 400, 10);
 	obs_properties_add_int_slider(props, SETTING_CURVE, "Curve Power (%)", 20, 300, 5);
 	obs_properties_add_int_slider(props, SETTING_FRAME_DENSITY, "Shape Density (%)", 10, 300, 5);
 
-	// Theme selection
 	obs_property_t *theme_prop =
 		obs_properties_add_list(props, SETTING_THEME, "Theme", OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 
@@ -332,16 +319,13 @@ static obs_properties_t *audio_wave_get_properties(void *data)
 		obs_property_list_add_string(theme_prop, t->display_name, t->id);
 	}
 
-	// Theme-specific options group
 	obs_properties_t *theme_group_content = obs_properties_create();
 	obs_property_t *theme_group = obs_properties_add_group(props, PROP_THEME_GROUP, "Theme Options",
 							       OBS_GROUP_NORMAL, theme_group_content);
 	UNUSED_PARAMETER(theme_group);
 
-	// Populate group with default theme's properties
 	on_theme_modified(props, theme_prop, nullptr);
 
-	// Rebuild theme properties when theme changes
 	obs_property_set_modified_callback(theme_prop, on_theme_modified);
 
 	return props;
@@ -354,6 +338,9 @@ static void audio_wave_get_defaults(obs_data_t *settings)
 	obs_data_set_default_string(settings, SETTING_AUDIO_SOURCE, "");
 	obs_data_set_default_int(settings, SETTING_WIDTH, 800);
 	obs_data_set_default_int(settings, SETTING_HEIGHT, 200);
+
+	// NEW: default global inset
+	obs_data_set_default_double(settings, SETTING_INSET, 0.08);
 
 	obs_data_set_default_int(settings, SETTING_AMPLITUDE, 200);
 	obs_data_set_default_int(settings, SETTING_CURVE, 100);
@@ -379,12 +366,15 @@ static void audio_wave_update(void *data, obs_data_t *settings)
 
 	detach_from_audio_source(s);
 
-	// Audio source
 	s->audio_source_name = obs_data_get_string(settings, SETTING_AUDIO_SOURCE);
 
-	// Core visual settings
 	s->width = (int)aw_get_int_default(settings, SETTING_WIDTH, 800);
 	s->height = (int)aw_get_int_default(settings, SETTING_HEIGHT, 400);
+
+	// NEW: global inset (0..0.4)
+	double inset = aw_get_float_default(settings, SETTING_INSET, 0.08f);
+	inset = std::clamp(inset, 0.0, 0.4);
+	s->inset_ratio = (float)inset;
 
 	s->frame_density = (int)aw_get_int_default(settings, SETTING_FRAME_DENSITY, 100);
 	s->frame_density = std::clamp(s->frame_density, 10, 300);
@@ -402,11 +392,9 @@ static void audio_wave_update(void *data, obs_data_t *settings)
 	if (s->height < 1)
 		s->height = 1;
 
-	// Theme selection
 	const char *theme_id = obs_data_get_string(settings, SETTING_THEME);
 	const audio_wave_theme *new_theme = audio_wave_find_theme(theme_id);
 
-	// If theme changed, clean up old theme_data
 	if (s->theme && s->theme != new_theme && s->theme->destroy_data) {
 		s->theme->destroy_data(s);
 		s->theme_data = nullptr;
@@ -415,7 +403,6 @@ static void audio_wave_update(void *data, obs_data_t *settings)
 	s->theme = new_theme;
 	s->theme_id = theme_id ? theme_id : "";
 
-	// Let theme read its own properties and configure s (color, mirror, style, etc.)
 	if (s->theme && s->theme->update) {
 		s->theme->update(s, settings);
 	}
@@ -429,10 +416,11 @@ static void *audio_wave_create(obs_data_t *settings, obs_source_t *source)
 
 	auto *s = new audio_wave_source{};
 	s->self = source;
-
-	// default color in case theme doesn't override
 	s->color = 0xFFFFFF;
 	s->mirror = false;
+
+	// ensure a sane default even before update()
+	s->inset_ratio = 0.08f;
 
 	audio_wave_update(s, settings);
 
@@ -517,14 +505,32 @@ static void audio_wave_video_render(void *data, gs_effect_t *effect)
 	if (!tech)
 		return;
 
-	// Build audio wave from latest samples
 	audio_wave_build_wave(s);
+
+	const float w = (float)s->width;
+	const float h = (float)s->height;
+	const float min_dim = std::min(w, h);
+
+	// NEW: apply global inset to ALL themes as a render transform
+	const float inset_px = std::max(0.0f, s->inset_ratio) * min_dim;
+	const float inner_w = std::max(1.0f, w - 2.0f * inset_px);
+	const float inner_h = std::max(1.0f, h - 2.0f * inset_px);
+	const float sx = inner_w / w;
+	const float sy = inner_h / h;
 
 	size_t passes = gs_technique_begin(tech);
 	for (size_t i = 0; i < passes; ++i) {
 		gs_technique_begin_pass(tech, i);
 
+		gs_matrix_push();
+		if (inset_px > 0.0f) {
+			gs_matrix_translate3f(inset_px, inset_px, 0.0f);
+			gs_matrix_scale3f(sx, sy, 1.0f);
+		}
+
 		s->theme->draw(s, color_param);
+
+		gs_matrix_pop();
 
 		gs_technique_end_pass(tech);
 	}

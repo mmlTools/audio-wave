@@ -18,7 +18,7 @@ static const char *CFR_PROP_COLOR_FRAME = "cfr_color_frame";
 static const char *CFR_PROP_COLOR_SPARK = "cfr_color_spark";
 
 static const char *CFR_PROP_FRAME_THICKNESS = "cfr_frame_thickness";
-static const char *CFR_PROP_FRAME_INSET = "cfr_frame_inset";
+// REMOVED: static const char *CFR_PROP_FRAME_INSET = "cfr_frame_inset";
 static const char *CFR_PROP_CORNER_LEN = "cfr_corner_length_ratio";
 
 static const char *CFR_PROP_SPARK_COUNT = "cfr_spark_count";
@@ -59,7 +59,7 @@ struct cfr_spark {
 // Per-source theme data
 struct cartoonframe_theme_data {
 	int frame_thickness = 6;
-	float inset_ratio = 0.08f;
+	// REMOVED: float inset_ratio = 0.08f;
 	float corner_len_ratio = 0.22f;
 
 	uint32_t spark_count = 40;
@@ -82,10 +82,11 @@ static void cartoonframe_theme_add_properties(obs_properties_t *props)
 	obs_properties_add_color(props, CFR_PROP_COLOR_FRAME, "Frame Color");
 	obs_properties_add_color(props, CFR_PROP_COLOR_SPARK, "Sparkle Color");
 	obs_properties_add_int_slider(props, CFR_PROP_FRAME_THICKNESS, "Frame Thickness", 1, 20, 1);
-	obs_properties_add_float_slider(props, CFR_PROP_FRAME_INSET, "Frame Inset (relative to canvas)", 0.0, 0.4,
-					0.01);
-	obs_properties_add_float_slider(props, CFR_PROP_CORNER_LEN, "Corner Length (fraction of side)", 0.05, 0.5,
-					0.01);
+
+	// REMOVED: per-theme inset; now global in Audio Wave source settings
+	// obs_properties_add_float_slider(props, CFR_PROP_FRAME_INSET, "Frame Inset (relative to canvas)", 0.0, 0.4, 0.01);
+
+	obs_properties_add_float_slider(props, CFR_PROP_CORNER_LEN, "Corner Length (fraction of side)", 0.05, 0.5, 0.01);
 	obs_properties_add_int_slider(props, CFR_PROP_SPARK_COUNT, "Spark Count", 0, 200, 2);
 	obs_properties_add_int_slider(props, CFR_PROP_SPARK_LENGTH, "Spark Length (px)", 5, 200, 5);
 	obs_properties_add_float_slider(props, CFR_PROP_SPARK_ENERGY, "Spark Energy Response", 0.0, 2.0, 0.05);
@@ -140,8 +141,8 @@ static void cartoonframe_theme_update(audio_wave_source *s, obs_data_t *settings
 	int frame_thickness = (int)aw_get_int_default(settings, CFR_PROP_FRAME_THICKNESS, 6);
 	frame_thickness = std::clamp(frame_thickness, 1, 20);
 
-	double inset = aw_get_float_default(settings, CFR_PROP_FRAME_INSET, 0.08f);
-	inset = std::clamp(inset, 0.0, 0.4);
+	// REMOVED: theme inset read (now global)
+	// double inset = aw_get_float_default(settings, CFR_PROP_FRAME_INSET, 0.08f);
 
 	double corner_len_ratio = aw_get_float_default(settings, CFR_PROP_CORNER_LEN, 0.22f);
 	corner_len_ratio = std::clamp(corner_len_ratio, 0.05, 0.5);
@@ -168,7 +169,7 @@ static void cartoonframe_theme_update(audio_wave_source *s, obs_data_t *settings
 	}
 
 	d->frame_thickness = frame_thickness;
-	d->inset_ratio = (float)inset;
+	// REMOVED: d->inset_ratio = (float)inset;
 	d->corner_len_ratio = (float)corner_len_ratio;
 
 	d->spark_count = (uint32_t)spark_count;
@@ -247,11 +248,9 @@ static void cartoonframe_theme_draw(audio_wave_source *s, gs_eparam_t *color_par
 	const float cx = w * 0.5f;
 	const float cy = h * 0.5f;
 
-	const float min_dim = std::min(w, h);
-	const float margin = d->inset_ratio * min_dim;
-
-	const float hx = std::max(0.0f, w * 0.5f - margin);
-	const float hy = std::max(0.0f, h * 0.5f - margin);
+	// REMOVED: theme-local inset margin; global inset is applied in audio-wave.cpp render transform
+	const float hx = std::max(0.0f, w * 0.5f);
+	const float hy = std::max(0.0f, h * 0.5f);
 
 	const float sideX = 2.0f * hx;
 	const float sideY = 2.0f * hy;
