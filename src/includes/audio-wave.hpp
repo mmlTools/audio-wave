@@ -48,6 +48,7 @@ struct audio_wave_source {
 	// Core visual parameters
 	int width = 800;
 	int height = 200;
+	float inset_ratio = 0.08f;
 	float gain = 2.0f;        // overall amplitude multiplier
 	float curve_power = 1.0f; // curve shaping power
 	int frame_density = 100;  // 10..300 (%), interpreted by themes

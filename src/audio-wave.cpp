@@ -16,6 +16,7 @@ static const char *kSourceName = "Audio Wave";
 static const char *SETTING_AUDIO_SOURCE = "audio_source";
 static const char *SETTING_WIDTH = "width";
 static const char *SETTING_HEIGHT = "height";
+static const char *SETTING_INSET = "inset_ratio"; // NEW: global inset
 static const char *SETTING_AMPLITUDE = "amplitude";
 static const char *SETTING_FRAME_DENSITY = "frame_density";
 static const char *SETTING_CURVE = "curve_power";
@@ -235,6 +236,10 @@ static void detach_from_audio_source(audio_wave_source *s)
 // Properties / UI
 // ─────────────────────────────────────────────
 
+#ifndef UNUSED_PARAMETER
+#define UNUSED_PARAMETER(x) (void)(x)
+#endif
+
 static void clear_properties(obs_properties_t *props)
 {
 	if (!props)
@@ -296,6 +301,9 @@ static obs_properties_t *audio_wave_get_properties(void *data)
 	obs_properties_add_int(props, SETTING_WIDTH, "Width", 64, 4096, 1);
 	obs_properties_add_int(props, SETTING_HEIGHT, "Height", 32, 2048, 1);
 
+	// NEW: global inset, applies to ALL themes via render transform
+	obs_properties_add_float_slider(props, SETTING_INSET, "Inset (relative to canvas)", 0.0, 0.4, 0.01);
+
 	obs_properties_add_int_slider(props, SETTING_AMPLITUDE, "Amplitude (%)", 10, 400, 10);
 	obs_properties_add_int_slider(props, SETTING_CURVE, "Curve Power (%)", 20, 300, 5);
 	obs_properties_add_int_slider(props, SETTING_FRAME_DENSITY, "Shape Density (%)", 10, 300, 5);
@@ -331,6 +339,9 @@ static void audio_wave_get_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, SETTING_WIDTH, 800);
 	obs_data_set_default_int(settings, SETTING_HEIGHT, 200);
 
+	// NEW: default global inset
+	obs_data_set_default_double(settings, SETTING_INSET, 0.08);
+
 	obs_data_set_default_int(settings, SETTING_AMPLITUDE, 200);
 	obs_data_set_default_int(settings, SETTING_CURVE, 100);
 	obs_data_set_default_int(settings, SETTING_FRAME_DENSITY, 100);
@@ -359,6 +370,11 @@ static void audio_wave_update(void *data, obs_data_t *settings)
 
 	s->width = (int)aw_get_int_default(settings, SETTING_WIDTH, 800);
 	s->height = (int)aw_get_int_default(settings, SETTING_HEIGHT, 400);
+
+	// NEW: global inset (0..0.4)
+	double inset = aw_get_float_default(settings, SETTING_INSET, 0.08f);
+	inset = std::clamp(inset, 0.0, 0.4);
+	s->inset_ratio = (float)inset;
 
 	s->frame_density = (int)aw_get_int_default(settings, SETTING_FRAME_DENSITY, 100);
 	s->frame_density = std::clamp(s->frame_density, 10, 300);
@@ -402,6 +418,9 @@ static void *audio_wave_create(obs_data_t *settings, obs_source_t *source)
 	s->self = source;
 	s->color = 0xFFFFFF;
 	s->mirror = false;
+
+	// ensure a sane default even before update()
+	s->inset_ratio = 0.08f;
 
 	audio_wave_update(s, settings);
 
@@ -488,11 +507,30 @@ static void audio_wave_video_render(void *data, gs_effect_t *effect)
 
 	audio_wave_build_wave(s);
 
+	const float w = (float)s->width;
+	const float h = (float)s->height;
+	const float min_dim = std::min(w, h);
+
+	// NEW: apply global inset to ALL themes as a render transform
+	const float inset_px = std::max(0.0f, s->inset_ratio) * min_dim;
+	const float inner_w = std::max(1.0f, w - 2.0f * inset_px);
+	const float inner_h = std::max(1.0f, h - 2.0f * inset_px);
+	const float sx = inner_w / w;
+	const float sy = inner_h / h;
+
 	size_t passes = gs_technique_begin(tech);
 	for (size_t i = 0; i < passes; ++i) {
 		gs_technique_begin_pass(tech, i);
 
+		gs_matrix_push();
+		if (inset_px > 0.0f) {
+			gs_matrix_translate3f(inset_px, inset_px, 0.0f);
+			gs_matrix_scale3f(sx, sy, 1.0f);
+		}
+
 		s->theme->draw(s, color_param);
+
+		gs_matrix_pop();
 
 		gs_technique_end_pass(tech);
 	}
