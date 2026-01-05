@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <atomic>
 
 // ─────────────────────────────────────────────
 // Core setting keys
@@ -38,6 +39,10 @@ struct audio_wave_source {
 	// Audio binding
 	std::string audio_source_name;
 	obs_weak_source_t *audio_weak = nullptr;
+
+	// Lifetime guards for audio callback (prevents use-after-free during destroy)
+	std::atomic<bool> alive{true};
+	std::atomic<uint32_t> audio_cb_inflight{0};
 
 	std::mutex audio_mutex;
 	std::vector<float> samples_left;

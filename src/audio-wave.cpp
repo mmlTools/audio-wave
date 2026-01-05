@@ -8,6 +8,8 @@
 #include <cstring>
 #include <vector>
 
+#include <util/platform.h>
+
 #define BLOG(log_level, format, ...) \
 	blog(log_level, "[audio-wave] " format, ##__VA_ARGS__)
 
@@ -166,18 +168,33 @@ static bool enum_audio_sources(void *data, obs_source_t *source)
 
 static void audio_capture_cb(void *param, obs_source_t *, const struct audio_data *audio, bool muted)
 {
-	auto *s = static_cast<audio_wave_source *>(param);
-	if (!s || !audio)
-		return;
+auto *s = static_cast<audio_wave_source *>(param);
+if (!s || !audio)
+	return;
 
-	if (muted || audio->frames == 0 || !audio->data[0])
-		return;
+// Lifetime guard: the callback may fire while the source is being destroyed.
+if (!s->alive.load(std::memory_order_acquire))
+	return;
 
-	const size_t frames = audio->frames;
+s->audio_cb_inflight.fetch_add(1, std::memory_order_acq_rel);
 
-	const float *left = reinterpret_cast<const float *>(audio->data[0]);
-	const float *right = audio->data[1] ? reinterpret_cast<const float *>(audio->data[1]) : nullptr;
+// Re-check after increment in case destroy flipped alive concurrently.
+if (!s->alive.load(std::memory_order_acquire)) {
+	s->audio_cb_inflight.fetch_sub(1, std::memory_order_acq_rel);
+	return;
+}
 
+if (muted || audio->frames == 0 || !audio->data[0]) {
+	s->audio_cb_inflight.fetch_sub(1, std::memory_order_acq_rel);
+	return;
+}
+
+const size_t frames = audio->frames;
+
+const float *left = reinterpret_cast<const float *>(audio->data[0]);
+const float *right = audio->data[1] ? reinterpret_cast<const float *>(audio->data[1]) : nullptr;
+
+{
 	std::lock_guard<std::mutex> lock(s->audio_mutex);
 
 	if (s->samples_left.size() != frames)
@@ -192,6 +209,9 @@ static void audio_capture_cb(void *param, obs_source_t *, const struct audio_dat
 		std::memcpy(s->samples_right.data(), left, frames * sizeof(float));
 
 	s->num_samples = frames;
+}
+
+s->audio_cb_inflight.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 static void attach_to_audio_source(audio_wave_source *s)
@@ -431,26 +451,37 @@ static void *audio_wave_create(obs_data_t *settings, obs_source_t *source)
 
 static void audio_wave_destroy(void *data)
 {
-	auto *s = static_cast<audio_wave_source *>(data);
-	if (!s)
-		return;
+auto *s = static_cast<audio_wave_source *>(data);
+if (!s)
+	return;
 
-	detach_from_audio_source(s);
+// Stop the audio callback from touching this instance.
+s->alive.store(false, std::memory_order_release);
 
-	if (s->theme && s->theme->destroy_data) {
-		s->theme->destroy_data(s);
-		s->theme_data = nullptr;
-	}
+// Detach callback first.
+detach_from_audio_source(s);
 
-	{
-		std::lock_guard<std::mutex> lock(s->audio_mutex);
-		s->samples_left.clear();
-		s->samples_right.clear();
-		s->wave.clear();
-		s->num_samples = 0;
-	}
+// Wait briefly for an in-flight callback to finish (prevents use-after-free).
+for (int i = 0; i < 2000; ++i) {
+	if (s->audio_cb_inflight.load(std::memory_order_acquire) == 0)
+		break;
+	os_sleep_ms(1);
+}
 
-	delete s;
+if (s->theme && s->theme->destroy_data) {
+	s->theme->destroy_data(s);
+	s->theme_data = nullptr;
+}
+
+{
+	std::lock_guard<std::mutex> lock(s->audio_mutex);
+	s->samples_left.clear();
+	s->samples_right.clear();
+	s->wave.clear();
+	s->num_samples = 0;
+}
+
+delete s;
 }
 
 static void audio_wave_show(void *data)
