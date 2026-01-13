@@ -90,18 +90,104 @@ void audio_wave_set_solid_color(gs_eparam_t *param, uint32_t color)
 	gs_effect_set_vec4(param, &c);
 }
 
-float audio_wave_apply_curve(const audio_wave_source *s, float v)
+static uint32_t parse_hex_color_0xRRGGBB(const char *s, bool *ok)
 {
-	if (v < 0.0f)
-		v = 0.0f;
-	if (v > 1.0f)
-		v = 1.0f;
+	*ok = false;
+	if (!s) return 0;
+	while (*s == ' ' || *s == '\t' || *s == ',') ++s;
+	if (*s == '#') ++s;
+	if (!*s) return 0;
 
-	float p = s ? s->curve_power : 1.0f;
-	if (p <= 0.0f)
-		p = 1.0f;
+	unsigned v = 0;
+	int digits = 0;
+	for (; *s; ++s) {
+		char c = *s;
+		if (c == ' ' || c == '\t' || c == ',')
+			break;
+		unsigned d = 0;
+		if (c >= '0' && c <= '9') d = (unsigned)(c - '0');
+		else if (c >= 'a' && c <= 'f') d = 10u + (unsigned)(c - 'a');
+		else if (c >= 'A' && c <= 'F') d = 10u + (unsigned)(c - 'A');
+		else return 0;
+		v = (v << 4) | d;
+		++digits;
+		if (digits > 8) return 0;
+	}
 
-	return powf(v, p);
+	if (digits == 6) {
+		*ok = true;
+		return (uint32_t)v;
+	}
+	if (digits == 8) {
+		// treat as AARRGGBB or RRGGBBAA? Accept AARRGGBB; drop alpha.
+		*ok = true;
+		return (uint32_t)(v & 0xFFFFFFu);
+	}
+	return 0;
+}
+
+static inline uint32_t lerp_color(uint32_t a, uint32_t b, float t)
+{
+	const uint8_t ar = (uint8_t)(a & 0xFF);
+	const uint8_t ag = (uint8_t)((a >> 8) & 0xFF);
+	const uint8_t ab = (uint8_t)((a >> 16) & 0xFF);
+
+	const uint8_t br = (uint8_t)(b & 0xFF);
+	const uint8_t bg = (uint8_t)((b >> 8) & 0xFF);
+	const uint8_t bb = (uint8_t)((b >> 16) & 0xFF);
+
+	const float r = ar + (br - ar) * t;
+	const float g = ag + (bg - ag) * t;
+	const float bl = ab + (bb - ab) * t;
+
+	return ((uint32_t)std::lround(bl) << 16) | ((uint32_t)std::lround(g) << 8) | (uint32_t)std::lround(r);
+}
+
+static void build_gradient_lut(audio_wave_source *s, const char *colors_csv)
+{
+	if (!s) return;
+
+	std::vector<uint32_t> stops;
+	if (colors_csv && *colors_csv) {
+		const char *p = colors_csv;
+		while (*p) {
+			bool ok = false;
+			uint32_t c = parse_hex_color_0xRRGGBB(p, &ok);
+			if (ok) stops.push_back(c);
+			// advance to next comma
+			while (*p && *p != ',') ++p;
+			if (*p == ',') ++p;
+		}
+	}
+
+	if (stops.size() < 2) {
+		s->gradient_enabled = false;
+		for (size_t i = 0; i < s->gradient_lut.size(); ++i)
+			s->gradient_lut[i] = s->color;
+		return;
+	}
+
+	// Build 256-entry LUT across [0..1], piecewise-linear between stops
+	const size_t n = stops.size();
+	for (int i = 0; i < 256; ++i) {
+		const float t = (float)i / 255.0f;
+		const float pos = t * (float)(n - 1);
+		const int seg = (int)std::floor(pos);
+		const float local = pos - (float)seg;
+		const int a = std::clamp(seg, 0, (int)n - 2);
+		const int b = a + 1;
+		s->gradient_lut[(size_t)i] = lerp_color(stops[(size_t)a], stops[(size_t)b], local);
+	}
+
+	s->gradient_enabled = true;
+}
+
+
+float audio_wave_apply_curve(const audio_wave_source * /*s*/, float v)
+{
+	if (v < 0.0f) v = 0.0f;
+	if (v > 1.0f) v = 1.0f;
+	return v;
 }
 
 void audio_wave_build_wave(audio_wave_source *s)
@@ -125,10 +211,20 @@ void audio_wave_build_wave(audio_wave_source *s)
 	for (size_t i = 0; i < frames; ++i) {
 		const float l = (i < L.size()) ? L[i] : 0.0f;
 		const float r = (i < R.size()) ? R[i] : l;
-		float m = s->gain * 0.5f * (std::fabs(l) + std::fabs(r));
-		if (m > 1.0f)
-			m = 1.0f;
-		s->wave[i] = m;
+		const float lin = 0.5f * (std::fabs(l) + std::fabs(r));
+
+		// Map linear [0..1] to dBFS then normalize to [0..1]
+		float db = -120.0f;
+		if (lin > 0.000001f)
+			db = 20.0f * log10f(lin);
+
+		const float react = s->react_db;
+		const float peak = std::max(s->peak_db, react + 0.1f);
+		float n = (db - react) / (peak - react);
+		if (n < 0.0f) n = 0.0f;
+		if (n > 1.0f) n = 1.0f;
+
+		s->wave[i] = n;
 	}
 }
 
@@ -324,8 +420,11 @@ static obs_properties_t *audio_wave_get_properties(void *data)
 	// NEW: global inset, applies to ALL themes via render transform
 	obs_properties_add_float_slider(props, SETTING_INSET, "Inset (relative to canvas)", 0.0, 0.4, 0.01);
 
-	obs_properties_add_int_slider(props, SETTING_AMPLITUDE, "Amplitude (%)", 10, 400, 10);
-	obs_properties_add_int_slider(props, SETTING_CURVE, "Curve Power (%)", 20, 300, 5);
+	obs_properties_add_color(props, SETTING_COLOR, "Color");
+	obs_properties_add_bool(props, SETTING_GRADIENT_ENABLED, "Use Gradient");
+	obs_properties_add_text(props, SETTING_GRADIENT_COLORS, "Gradient Colors (comma-separated #RRGGBB)", OBS_TEXT_DEFAULT);
+	obs_properties_add_float_slider(props, SETTING_REACT_DB, "React at (dB)", -80.0, -1.0, 1.0);
+	obs_properties_add_float_slider(props, SETTING_PEAK_DB, "Peak at (dB)", -60.0, 0.0, 1.0);
 	obs_properties_add_int_slider(props, SETTING_FRAME_DENSITY, "Shape Density (%)", 10, 300, 5);
 
 	obs_property_t *theme_prop =
@@ -362,8 +461,11 @@ static void audio_wave_get_defaults(obs_data_t *settings)
 	// NEW: default global inset
 	obs_data_set_default_double(settings, SETTING_INSET, 0.08);
 
-	obs_data_set_default_int(settings, SETTING_AMPLITUDE, 200);
-	obs_data_set_default_int(settings, SETTING_CURVE, 100);
+	obs_data_set_default_int(settings, SETTING_COLOR, 0xFFFFFF);
+	obs_data_set_default_bool(settings, SETTING_GRADIENT_ENABLED, false);
+	obs_data_set_default_string(settings, SETTING_GRADIENT_COLORS, "");
+	obs_data_set_default_double(settings, SETTING_REACT_DB, -50.0);
+	obs_data_set_default_double(settings, SETTING_PEAK_DB, -6.0);
 	obs_data_set_default_int(settings, SETTING_FRAME_DENSITY, 100);
 
 	const audio_wave_theme *def = audio_wave_get_default_theme();
@@ -384,47 +486,72 @@ static void audio_wave_update(void *data, obs_data_t *settings)
 
 	audio_wave_register_builtin_themes();
 
+	// Detach audio callback first (not tied to graphics thread).
 	detach_from_audio_source(s);
 
 	s->audio_source_name = obs_data_get_string(settings, SETTING_AUDIO_SOURCE);
 
-	s->width = (int)aw_get_int_default(settings, SETTING_WIDTH, 800);
-	s->height = (int)aw_get_int_default(settings, SETTING_HEIGHT, 400);
+	{
+		// Guard render-state mutations against the graphics thread.
+		std::lock_guard<std::mutex> g(s->render_mutex);
 
-	// NEW: global inset (0..0.4)
-	double inset = aw_get_float_default(settings, SETTING_INSET, 0.08f);
-	inset = std::clamp(inset, 0.0, 0.4);
-	s->inset_ratio = (float)inset;
+		s->width = (int)aw_get_int_default(settings, SETTING_WIDTH, 800);
+		s->height = (int)aw_get_int_default(settings, SETTING_HEIGHT, 200);
 
-	s->frame_density = (int)aw_get_int_default(settings, SETTING_FRAME_DENSITY, 100);
-	s->frame_density = std::clamp(s->frame_density, 10, 300);
+		// Global inset (0..0.4)
+		double inset = aw_get_float_default(settings, SETTING_INSET, 0.08f);
+		inset = std::clamp(inset, 0.0, 0.4);
+		s->inset_ratio = (float)inset;
 
-	int amp_pct = (int)aw_get_int_default(settings, SETTING_AMPLITUDE, 200);
-	amp_pct = std::clamp(amp_pct, 10, 400);
-	s->gain = (float)amp_pct / 100.0f;
+		s->frame_density = (int)aw_get_int_default(settings, SETTING_FRAME_DENSITY, 100);
+		s->frame_density = std::clamp(s->frame_density, 10, 300);
 
-	int curve_pct = (int)aw_get_int_default(settings, SETTING_CURVE, 100);
-	curve_pct = std::clamp(curve_pct, 20, 300);
-	s->curve_power = (float)curve_pct / 100.0f;
+		// Audio response (dBFS)
+		double react = aw_get_float_default(settings, SETTING_REACT_DB, -50.0f);
+		double peak = aw_get_float_default(settings, SETTING_PEAK_DB, -6.0f);
+		react = std::clamp(react, -80.0, -1.0);
+		peak = std::clamp(peak, -60.0, 0.0);
+		if (peak <= react)
+			peak = react + 0.1;
 
-	if (s->width < 1)
-		s->width = 1;
-	if (s->height < 1)
-		s->height = 1;
+		s->react_db = (float)react;
+		s->peak_db = (float)peak;
 
-	const char *theme_id = obs_data_get_string(settings, SETTING_THEME);
-	const audio_wave_theme *new_theme = audio_wave_find_theme(theme_id);
+		if (s->width < 1)
+			s->width = 1;
+		if (s->height < 1)
+			s->height = 1;
 
-	if (s->theme && s->theme != new_theme && s->theme->destroy_data) {
-		s->theme->destroy_data(s);
-		s->theme_data = nullptr;
-	}
+		// Global color / gradient
+		uint32_t color = (uint32_t)aw_get_int_default(settings, SETTING_COLOR, 0xFFFFFF);
+		if ((color & 0xFFFFFFu) == 0)
+			color = 0xFFFFFF;
+		s->color = (color & 0xFFFFFFu);
 
-	s->theme = new_theme;
-	s->theme_id = theme_id ? theme_id : "";
+		const bool use_grad = obs_data_get_bool(settings, SETTING_GRADIENT_ENABLED);
+		const char *grad_csv = obs_data_get_string(settings, SETTING_GRADIENT_COLORS);
+		if (use_grad) {
+			build_gradient_lut(s, grad_csv);
+		} else {
+			s->gradient_enabled = false;
+			for (size_t i = 0; i < s->gradient_lut.size(); ++i)
+				s->gradient_lut[i] = s->color;
+		}
 
-	if (s->theme && s->theme->update) {
-		s->theme->update(s, settings);
+		const char *theme_id = obs_data_get_string(settings, SETTING_THEME);
+		const audio_wave_theme *new_theme = audio_wave_find_theme(theme_id);
+
+		if (s->theme && s->theme != new_theme && s->theme->destroy_data) {
+			s->theme->destroy_data(s);
+			s->theme_data = nullptr;
+		}
+
+		s->theme = new_theme;
+		s->theme_id = theme_id ? theme_id : "";
+
+		if (s->theme && s->theme->update) {
+			s->theme->update(s, settings);
+		}
 	}
 
 	attach_to_audio_source(s);
@@ -438,9 +565,14 @@ static void *audio_wave_create(obs_data_t *settings, obs_source_t *source)
 	s->self = source;
 	s->color = 0xFFFFFF;
 	s->mirror = false;
+	s->gradient_enabled = false;
+	for (size_t i = 0; i < s->gradient_lut.size(); ++i)
+		s->gradient_lut[i] = s->color;
 
 	// ensure a sane default even before update()
 	s->inset_ratio = 0.08f;
+	s->react_db = -50.0f;
+	s->peak_db = -6.0f;
 
 	audio_wave_update(s, settings);
 
@@ -469,6 +601,7 @@ for (int i = 0; i < 2000; ++i) {
 }
 
 if (s->theme && s->theme->destroy_data) {
+	std::lock_guard<std::mutex> g(s->render_mutex);
 	s->theme->destroy_data(s);
 	s->theme_data = nullptr;
 }
@@ -524,8 +657,39 @@ static void audio_wave_video_render(void *data, gs_effect_t *effect)
 	UNUSED_PARAMETER(effect);
 
 	auto *s = static_cast<audio_wave_source *>(data);
-	if (!s || !s->theme || !s->theme->draw)
+	if (!s)
 		return;
+
+	// Guard against update() changing theme/theme_data mid-render.
+	std::lock_guard<std::mutex> g(s->render_mutex);
+
+	if (!s->theme || !s->theme->draw)
+		return;
+
+	// Build wave data (audio mutex inside).
+	audio_wave_build_wave(s);
+
+	const float w = (float)s->width;
+	const float h = (float)s->height;
+	const float min_dim = std::min(w, h);
+
+	// Global inset transform applies to all themes.
+	const float inset_px = std::max(0.0f, s->inset_ratio) * min_dim;
+	const float inner_w = std::max(1.0f, w - 2.0f * inset_px);
+	const float inner_h = std::max(1.0f, h - 2.0f * inset_px);
+	const float sx = inner_w / w;
+	const float sy = inner_h / h;
+
+	// Optional background pass (before solid pass).
+	if (s->theme->draw_background) {
+		gs_matrix_push();
+		if (inset_px > 0.0f) {
+			gs_matrix_translate3f(inset_px, inset_px, 0.0f);
+			gs_matrix_scale3f(sx, sy, 1.0f);
+		}
+		s->theme->draw_background(s);
+		gs_matrix_pop();
+	}
 
 	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 	if (!solid)
@@ -535,19 +699,6 @@ static void audio_wave_video_render(void *data, gs_effect_t *effect)
 	gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
 	if (!tech)
 		return;
-
-	audio_wave_build_wave(s);
-
-	const float w = (float)s->width;
-	const float h = (float)s->height;
-	const float min_dim = std::min(w, h);
-
-	// NEW: apply global inset to ALL themes as a render transform
-	const float inset_px = std::max(0.0f, s->inset_ratio) * min_dim;
-	const float inner_w = std::max(1.0f, w - 2.0f * inset_px);
-	const float inner_h = std::max(1.0f, h - 2.0f * inset_px);
-	const float sx = inner_w / w;
-	const float sy = inner_h / h;
 
 	size_t passes = gs_technique_begin(tech);
 	for (size_t i = 0; i < passes; ++i) {
@@ -568,7 +719,7 @@ static void audio_wave_video_render(void *data, gs_effect_t *effect)
 	gs_technique_end(tech);
 }
 
-static const char *audio_wave_get_name(void *)
+static const char *audio_wave_get_namestatic const char *audio_wave_get_name(void *)
 {
 	return kSourceName;
 }

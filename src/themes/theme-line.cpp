@@ -11,8 +11,6 @@
 static const char *k_theme_id_line = "line";
 static const char *k_theme_name_line = "Line";
 static const char *LINE_PROP_STYLE = "line_style";
-static const char *LINE_PROP_COLOR = "line_color";
-static const char *LINE_PROP_FILL_COLOR = "line_fill_color";
 static const char *LINE_PROP_MIRROR = "line_mirror";
 static const char *LINE_PROP_CURVE_COUNT = "line_curve_count";
 static const char *LINE_PROP_OUTLINE_THICK = "line_outline_thickness";
@@ -33,13 +31,8 @@ static bool line_style_modified(obs_properties_t *props, obs_property_t *propert
 
 	const char *style_id = obs_data_get_string(settings, LINE_PROP_STYLE);
 	const bool is_filled = (style_id && std::strcmp(style_id, "filled") == 0);
-
-	obs_property_t *fill_color = obs_properties_get(props, LINE_PROP_FILL_COLOR);
 	obs_property_t *curve_cnt = obs_properties_get(props, LINE_PROP_CURVE_COUNT);
 	obs_property_t *outline_th = obs_properties_get(props, LINE_PROP_OUTLINE_THICK);
-
-	if (fill_color)
-		obs_property_set_visible(fill_color, is_filled);
 	if (curve_cnt)
 		obs_property_set_visible(curve_cnt, is_filled);
 	if (outline_th)
@@ -59,10 +52,6 @@ static void line_theme_add_properties(obs_properties_t *props)
 
 	obs_property_set_modified_callback(style, line_style_modified);
 
-	obs_property_t *outline_color = obs_properties_add_color(props, LINE_PROP_COLOR, "Outline Color");
-
-	obs_property_t *fill_color = obs_properties_add_color(props, LINE_PROP_FILL_COLOR, "Fill Color");
-
 	obs_property_t *mirror = obs_properties_add_bool(props, LINE_PROP_MIRROR, "Mirror vertically");
 
 	obs_property_t *curve_cnt =
@@ -70,12 +59,9 @@ static void line_theme_add_properties(obs_properties_t *props)
 
 	obs_property_t *outline_th =
 		obs_properties_add_int_slider(props, LINE_PROP_OUTLINE_THICK, "Outline Thickness", 1, 8, 1);
-
-	obs_property_set_visible(fill_color, false);
 	obs_property_set_visible(curve_cnt, false);
 	obs_property_set_visible(outline_th, false);
 
-	UNUSED_PARAMETER(outline_color);
 	UNUSED_PARAMETER(mirror);
 }
 
@@ -89,20 +75,6 @@ static void line_theme_update(audio_wave_source *s, obs_data_t *settings)
 		style_id = "linear";
 
 	s->theme_style_id = style_id;
-
-	uint32_t outline = (uint32_t)aw_get_int_default(settings, LINE_PROP_COLOR, 0);
-	if (outline == 0)
-		outline = 0xFF0000;
-
-	uint32_t fill = (uint32_t)aw_get_int_default(settings, LINE_PROP_FILL_COLOR, 0);
-	if (fill == 0)
-		fill = 0x001A4F;
-
-	s->color = outline;
-
-	s->colors.clear();
-	s->colors.push_back(audio_wave_named_color{"outline", outline});
-	s->colors.push_back(audio_wave_named_color{"fill", fill});
 
 	s->mirror = obs_data_get_bool(settings, LINE_PROP_MIRROR);
 
@@ -183,9 +155,8 @@ static void draw_line_linear(audio_wave_source *s, gs_eparam_t *color_param, boo
 	};
 
 	if (color_param)
-		audio_wave_set_solid_color(color_param, s->color);
-
-	gs_render_start(true);
+		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
+gs_render_start(true);
 	for (uint32_t x = 0; x < width_u; ++x) {
 		const float v_raw = get_amp(x);
 		const float v = audio_wave_apply_curve(s, v_raw);
@@ -229,9 +200,8 @@ static void draw_line_bars(audio_wave_source *s, gs_eparam_t *color_param)
 	}
 
 	if (color_param)
-		audio_wave_set_solid_color(color_param, s->color);
-
-	const uint32_t step = 3;
+		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
+const uint32_t step = 3;
 
 	gs_render_start(true);
 	for (uint32_t x = 0; x < width_u; x += step) {
@@ -272,9 +242,6 @@ static void draw_line_filled(audio_wave_source *s, gs_eparam_t *color_param)
 		d = new line_theme_data{};
 		s->theme_data = d;
 	}
-
-	const uint32_t outline_color = audio_wave_get_color(s, 0, s->color);
-	const uint32_t fill_color = audio_wave_get_color(s, 1, outline_color);
 
 	std::vector<float> amp(width_u);
 	for (uint32_t x = 0; x < width_u; ++x) {
@@ -321,7 +288,7 @@ static void draw_line_filled(audio_wave_source *s, gs_eparam_t *color_param)
 	d->initialized = true;
 
 	if (color_param)
-		audio_wave_set_solid_color(color_param, fill_color);
+		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
 
 	gs_render_start(true);
 	for (uint32_t x = 0; x + 1 < width_u; ++x) {
@@ -355,7 +322,7 @@ static void draw_line_filled(audio_wave_source *s, gs_eparam_t *color_param)
 	gs_render_stop(GS_TRIS);
 
 	if (color_param)
-		audio_wave_set_solid_color(color_param, outline_color);
+		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
 
 	int thick = d->outline_thickness;
 	if (thick < 1)
@@ -401,9 +368,8 @@ static void line_theme_draw(audio_wave_source *s, gs_eparam_t *color_param)
 
 	if (frames < 2) {
 		if (color_param)
-			audio_wave_set_solid_color(color_param, s->color);
-
-		gs_render_start(true);
+		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
+gs_render_start(true);
 		for (uint32_t x = 0; x < (uint32_t)w; ++x)
 			gs_vertex2f((float)x, mid_y);
 		gs_render_stop(GS_LINESTRIP);

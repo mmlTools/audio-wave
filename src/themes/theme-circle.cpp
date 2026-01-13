@@ -11,7 +11,6 @@ static const char *k_theme_id_circle = "circle";
 static const char *k_theme_name_circle = "Circle";
 
 static const char *CIRCLE_PROP_STYLE = "circle_style";
-static const char *CIRCLE_PROP_COLOR = "circle_color";
 static const char *CIRCLE_PROP_MIRROR = "circle_mirror";
 
 static void circle_theme_add_properties(obs_properties_t *props)
@@ -22,7 +21,6 @@ static void circle_theme_add_properties(obs_properties_t *props)
 	obs_property_list_add_string(style, "Orbit", "orbit");
 	obs_property_list_add_string(style, "Rays", "rays");
 
-	obs_properties_add_color(props, CIRCLE_PROP_COLOR, "Color");
 	obs_properties_add_bool(props, CIRCLE_PROP_MIRROR, "Double-sided rays");
 }
 
@@ -36,15 +34,6 @@ static void circle_theme_update(audio_wave_source *s, obs_data_t *settings)
 		style_id = "orbit";
 
 	s->theme_style_id = style_id;
-
-	uint32_t color = (uint32_t)aw_get_int_default(settings, CIRCLE_PROP_COLOR, 0);
-	if (color == 0)
-		color = 0x00FFFF;
-
-	s->color = color;
-
-	s->colors.clear();
-	s->colors.push_back(audio_wave_named_color{"circle", color});
 
 	if (s->frame_density < 40)
 		s->frame_density = 40;
@@ -99,10 +88,8 @@ static void draw_circle_orbit(audio_wave_source *s, gs_eparam_t *color_param)
 	auto get_amp = [&](uint32_t i) -> float {
 		return amp_smooth[i];
 	};
-
-	const uint32_t circ_color = audio_wave_get_color(s, 0, s->color);
 	if (color_param)
-		audio_wave_set_solid_color(color_param, circ_color);
+		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
 
 	gs_render_start(true);
 	for (uint32_t i = 0; i <= segments; ++i) {
@@ -154,10 +141,8 @@ static void draw_circle_rays(audio_wave_source *s, gs_eparam_t *color_param)
 		const size_t idx = (size_t)(u * (float)(frames - 1));
 		amp[i] = (idx < frames) ? s->wave[idx] : 0.0f;
 	}
-
-	const uint32_t circ_color = audio_wave_get_color(s, 0, s->color);
 	if (color_param)
-		audio_wave_set_solid_color(color_param, circ_color);
+		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
 
 	gs_render_start(true);
 	for (uint32_t i = 0; i < segments; ++i) {
@@ -205,7 +190,7 @@ static void circle_theme_draw(audio_wave_source *s, gs_eparam_t *color_param)
 	if (frames < 2) {
 		const uint32_t circ_color = audio_wave_get_color(s, 0, s->color);
 		if (color_param)
-			audio_wave_set_solid_color(color_param, circ_color);
+			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
 
 		gs_render_start(true);
 		for (uint32_t x = 0; x < (uint32_t)w; ++x)

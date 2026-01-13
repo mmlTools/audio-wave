@@ -6,7 +6,6 @@
 static const char *k_theme_id_star = "star";
 static const char *k_theme_name_star = "Star";
 static const char *STAR_PROP_STYLE = "star_style";
-static const char *STAR_PROP_COLOR = "star_color";
 static const char *STAR_PROP_MIRROR = "star_mirror";
 
 static void star_theme_add_properties(obs_properties_t *props)
@@ -17,7 +16,6 @@ static void star_theme_add_properties(obs_properties_t *props)
 	obs_property_list_add_string(style, "Linear Orbit", "linear");
 	obs_property_list_add_string(style, "Rays", "rays");
 
-	obs_properties_add_color(props, STAR_PROP_COLOR, "Color");
 	obs_properties_add_bool(props, STAR_PROP_MIRROR, "Double-sided rays");
 }
 
@@ -31,15 +29,6 @@ static void star_theme_update(audio_wave_source *s, obs_data_t *settings)
 		style_id = "linear";
 
 	s->theme_style_id = style_id;
-
-	uint32_t color = (uint32_t)aw_get_int_default(settings, STAR_PROP_COLOR, 0);
-	if (color == 0)
-		color = 0xFFFFFF;
-
-	s->color = color;
-
-	s->colors.clear();
-	s->colors.push_back(audio_wave_named_color{"star", color});
 
 	if (s->frame_density < 80)
 		s->frame_density = 80;
@@ -177,10 +166,8 @@ static void draw_star_linear(audio_wave_source *s, gs_eparam_t *color_param)
 	auto get_amp = [&](uint32_t i) -> float {
 		return amp_smooth[i];
 	};
-
-	const uint32_t star_color = audio_wave_get_color(s, 0, s->color);
 	if (color_param)
-		audio_wave_set_solid_color(color_param, star_color);
+		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
 
 	gs_render_start(true);
 	for (uint32_t i = 0; i < segments; ++i) {
@@ -248,10 +235,8 @@ static void draw_star_rays(audio_wave_source *s, gs_eparam_t *color_param)
 		const size_t idx = (size_t)(u * (float)(frames - 1));
 		amp[i] = (idx < frames) ? s->wave[idx] : 0.0f;
 	}
-
-	const uint32_t star_color = audio_wave_get_color(s, 0, s->color);
 	if (color_param)
-		audio_wave_set_solid_color(color_param, star_color);
+		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
 
 	gs_render_start(true);
 	for (uint32_t i = 0; i < segments; ++i) {
@@ -293,7 +278,7 @@ static void star_theme_draw(audio_wave_source *s, gs_eparam_t *color_param)
 	if (frames < 2) {
 		const uint32_t star_color = audio_wave_get_color(s, 0, s->color);
 		if (color_param)
-			audio_wave_set_solid_color(color_param, star_color);
+			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
 
 		gs_render_start(true);
 		for (uint32_t x = 0; x < (uint32_t)w; ++x)

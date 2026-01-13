@@ -17,7 +17,6 @@ static const char *k_theme_name_rounded_bars = "Rounded Wobble Bars";
 // Property keys
 // ─────────────────────────────────────────────
 
-static const char *RB_PROP_COLOR_BAR = "rb_color_bar";
 
 static const char *RB_PROP_DB_FLOOR = "rb_db_floor";
 static const char *RB_PROP_DB_TARGET = "rb_db_target";
@@ -293,8 +292,6 @@ struct rounded_bars_theme_data {
 
 static void rounded_bars_theme_add_properties(obs_properties_t *props)
 {
-	obs_properties_add_color(props, RB_PROP_COLOR_BAR, "Bar Color");
-
 	obs_properties_add_int_slider(props, RB_PROP_DB_FLOOR, "Floor dB (silence)", -60, 0, 1);
 	obs_properties_add_int_slider(props, RB_PROP_DB_REACT, "React from (dB)", -60, 0, 1);
 	obs_properties_add_int_slider(props, RB_PROP_DB_TARGET, "Full Extra Height dB", -60, 0, 1);
@@ -312,15 +309,6 @@ static void rounded_bars_theme_update(audio_wave_source *s, obs_data_t *settings
 		return;
 
 	s->theme_style_id = "default";
-
-	uint32_t col_bar = (uint32_t)aw_get_int_default(settings, RB_PROP_COLOR_BAR, 0);
-	if (col_bar == 0)
-		col_bar = 0x00FFCC; // default teal
-
-	s->color = col_bar;
-
-	s->colors.clear();
-	s->colors.push_back(audio_wave_named_color{"bar", col_bar});
 
 	int db_floor = aw_get_int_default(settings, RB_PROP_DB_FLOOR, -50);
 	int db_target = aw_get_int_default(settings, RB_PROP_DB_TARGET, -10);
@@ -390,8 +378,7 @@ static void rounded_bars_theme_draw(audio_wave_source *s, gs_eparam_t *color_par
 
 	const uint32_t bars = std::max(d->bars, 8u);
 
-	const uint32_t col_bar = audio_wave_get_color(s, 0, s->color);
-
+	
 	// ensure buffers
 	if (d->value.size() != bars) {
 		d->value.assign(bars, 0.0f);
@@ -481,7 +468,10 @@ static void rounded_bars_theme_draw(audio_wave_source *s, gs_eparam_t *color_par
 
 	// Draw bars (base + extra), centered, optional true vertical mirror
 	if (color_param)
-		audio_wave_set_solid_color(color_param, col_bar);
+		{
+			const float tcol = (bar_count <= 1) ? 0.0f : ((float)i / (float)(bar_count - 1));
+			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, tcol));
+		}
 
 	const int capSegments = 12;
 
