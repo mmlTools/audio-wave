@@ -370,7 +370,7 @@ static void star_theme_draw(audio_wave_source *s, gs_eparam_t *color_param)
 	if (frames < 2) {
 		const uint32_t star_color = audio_wave_get_color(s, 0, s->color);
 		if (color_param)
-			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
+			audio_wave_set_solid_color(color_param, star_color);
 
 		gs_render_start(true);
 		for (uint32_t x = 0; x < (uint32_t)w; ++x)
