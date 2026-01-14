@@ -4,6 +4,9 @@
 #include <graphics/graphics.h>
 
 #include <cstdint>
+#include <array>
+#include <algorithm>
+#include <cmath>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -48,25 +51,44 @@ struct audio_wave_source {
 	std::vector<float> samples_left;
 	std::vector<float> samples_right;
 	size_t num_samples = 0;
-	std::vector<float> wave; // normalized 0..1 amplitudes, built from samples
+	// Wave data:
+	//   wave_raw: instantaneous (per-frame) normalized 0..1 built from samples
+	//   wave:     smoothed values used by themes for rendering
+	std::vector<float> wave_raw;
+	std::vector<float> wave;
+
+	// Smoothing (attack/release in milliseconds). Applied to wave_raw -> wave.
+	float attack_ms = 35.0f;   // rising (expand)
+	float release_ms = 180.0f; // falling (retract)
+	uint64_t last_wave_ts_ns = 0;
 
 	// Core visual parameters
 	int width = 800;
 	int height = 200;
 	float inset_ratio = 0.08f;
-	float gain = 2.0f;        // overall amplitude multiplier
-	float curve_power = 1.0f; // curve shaping power
 	int frame_density = 100;  // 10..300 (%), interpreted by themes
+
+	// Audio response mapping (dBFS)
+	float react_db = -50.0f; // where motion starts
+	float peak_db  = -6.0f;  // where motion reaches 1.0
+
+	// Global color / gradient
+	uint32_t color = 0xFFFFFF; // fallback (0xRRGGBB)
+	bool gradient_enabled = false;
+	std::array<uint32_t, 256> gradient_lut{}; // precomputed sRGB 0xRRGGBB
+
 
 	// Theme selection + basic state
 	std::string theme_id;       // current theme id
 	std::string theme_style_id; // optional style inside a theme
 
-	uint32_t color = 0xFFFFFF; // primary color (fallback)
 	bool mirror = false;       // optional horizontal mirroring (if used by theme)
 
 	// Generic theme palette: colors[0], colors[1], ...
 	std::vector<audio_wave_named_color> colors;
+
+	// Render-state guard (prevents update() vs video_render() races)
+	std::mutex render_mutex;
 
 	// Opaque per-instance data owned by the active theme
 	void *theme_data = nullptr;
@@ -74,6 +96,21 @@ struct audio_wave_source {
 };
 
 // Small helper: safe color access with fallback
+
+// Fast gradient lookup (t clamped 0..1). Falls back to s->color if disabled.
+inline uint32_t aw_gradient_color_at(const audio_wave_source *s, float t)
+{
+	if (!s)
+		return 0xFFFFFF;
+	if (!s->gradient_enabled)
+		return s->color;
+
+	if (t < 0.0f) t = 0.0f;
+	if (t > 1.0f) t = 1.0f;
+	const int idx = (int)std::lround(t * 255.0f);
+	return s->gradient_lut[(size_t)std::clamp(idx, 0, 255)];
+}
+
 inline uint32_t audio_wave_get_color(const audio_wave_source *s, size_t index, uint32_t fallback)
 {
 	if (!s)
