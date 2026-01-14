@@ -12,6 +12,19 @@ static const char *k_theme_name_circle = "Circle";
 
 static const char *CIRCLE_PROP_STYLE = "circle_style";
 static const char *CIRCLE_PROP_MIRROR = "circle_mirror";
+static const char *P_DENSITY = "shape_density";
+
+static bool circle_style_modified(obs_properties_t *props, obs_property_t *, obs_data_t *settings)
+{
+	const char *style_id = obs_data_get_string(settings, CIRCLE_PROP_STYLE);
+	const bool is_rays = (style_id && strcmp(style_id, "rays") == 0);
+
+	obs_property_t *mirror = obs_properties_get(props, CIRCLE_PROP_MIRROR);
+	if (mirror)
+		obs_property_set_visible(mirror, is_rays);
+
+	return true;
+}
 
 static void circle_theme_add_properties(obs_properties_t *props)
 {
@@ -20,8 +33,11 @@ static void circle_theme_add_properties(obs_properties_t *props)
 
 	obs_property_list_add_string(style, "Orbit", "orbit");
 	obs_property_list_add_string(style, "Rays", "rays");
+	obs_property_set_modified_callback(style, circle_style_modified);
 
-	obs_properties_add_bool(props, CIRCLE_PROP_MIRROR, "Double-sided rays");
+	obs_property_t *mirror = obs_properties_add_bool(props, CIRCLE_PROP_MIRROR, "Double-sided rays");
+	obs_property_set_visible(mirror, false);
+	obs_properties_add_int_slider(props, P_DENSITY, "Shape Density (%)", 10, 300, 5);
 }
 
 static void circle_theme_update(audio_wave_source *s, obs_data_t *settings)
@@ -35,10 +51,11 @@ static void circle_theme_update(audio_wave_source *s, obs_data_t *settings)
 
 	s->theme_style_id = style_id;
 
-	if (s->frame_density < 40)
-		s->frame_density = 40;
+	int density = aw_get_int_default(settings, P_DENSITY, 120);
+	density = std::clamp(density, 10, 300);
+	s->frame_density = density;
 
-	s->mirror = obs_data_get_bool(settings, CIRCLE_PROP_MIRROR);
+	s->mirror = (strcmp(style_id, "rays") == 0) ? obs_data_get_bool(settings, CIRCLE_PROP_MIRROR) : false;
 }
 
 // ─────────────────────────────────────────────
@@ -88,28 +105,47 @@ static void draw_circle_orbit(audio_wave_source *s, gs_eparam_t *color_param)
 	auto get_amp = [&](uint32_t i) -> float {
 		return amp_smooth[i];
 	};
-	if (color_param)
-		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
 
-	gs_render_start(true);
-	for (uint32_t i = 0; i <= segments; ++i) {
-		uint32_t idx = (i == segments) ? 0 : i;
-
-		const float u = (float)idx / (float)segments;
+	std::vector<float> px(segments), py(segments);
+	for (uint32_t i = 0; i < segments; ++i) {
+		const float u = (float)i / (float)segments;
 		const float a = u * 2.0f * (float)M_PI;
-
-		const float v_raw = get_amp(idx);
+		const float v_raw = get_amp(i);
 		const float v = audio_wave_apply_curve(s, v_raw);
 		const float L = v * L_max;
-
 		const float R = R_base + L;
-
-		const float x = cx + std::cos(a) * R;
-		const float y = cy + std::sin(a) * R;
-
-		gs_vertex2f(x, y);
+		px[i] = cx + std::cos(a) * R;
+		py[i] = cy + std::sin(a) * R;
 	}
-	gs_render_stop(GS_LINESTRIP);
+
+	if (color_param && s->gradient_enabled) {
+		const uint32_t bins = 64;
+		for (uint32_t b = 0; b < bins; ++b) {
+			const uint32_t i0 = (uint32_t)((uint64_t)b * segments / bins);
+			const uint32_t i1 = (uint32_t)((uint64_t)(b + 1) * segments / bins);
+			if (i1 <= i0)
+				continue;
+			const float tcol = (bins <= 1) ? 0.0f : ((float)b / (float)(bins - 1));
+			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, tcol));
+			gs_render_start(true);
+			for (uint32_t i = i0; i < i1; ++i) {
+				const uint32_t j = (i + 1) % segments;
+				gs_vertex2f(px[i], py[i]);
+				gs_vertex2f(px[j], py[j]);
+			}
+			gs_render_stop(GS_LINES);
+		}
+	} else {
+		if (color_param)
+			audio_wave_set_solid_color(color_param, s->color);
+		gs_render_start(true);
+		for (uint32_t i = 0; i < segments; ++i) {
+			const uint32_t j = (i + 1) % segments;
+			gs_vertex2f(px[i], py[i]);
+			gs_vertex2f(px[j], py[j]);
+		}
+		gs_render_stop(GS_LINES);
+	}
 }
 
 static void draw_circle_rays(audio_wave_source *s, gs_eparam_t *color_param)
@@ -141,37 +177,74 @@ static void draw_circle_rays(audio_wave_source *s, gs_eparam_t *color_param)
 		const size_t idx = (size_t)(u * (float)(frames - 1));
 		amp[i] = (idx < frames) ? s->wave[idx] : 0.0f;
 	}
-	if (color_param)
-		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
+	if (color_param && s->gradient_enabled) {
+		const uint32_t bins = 64;
+		for (uint32_t b = 0; b < bins; ++b) {
+			const uint32_t i0 = (uint32_t)((uint64_t)b * segments / bins);
+			const uint32_t i1 = (uint32_t)((uint64_t)(b + 1) * segments / bins);
+			if (i1 <= i0)
+				continue;
+			const float tcol = (bins <= 1) ? 0.0f : ((float)b / (float)(bins - 1));
+			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, tcol));
+			gs_render_start(true);
+			for (uint32_t i = i0; i < i1; ++i) {
+				const float u = (float)i / (float)segments;
+				const float a = u * 2.0f * (float)M_PI;
 
-	gs_render_start(true);
-	for (uint32_t i = 0; i < segments; ++i) {
-		const float u = (float)i / (float)segments;
-		const float a = u * 2.0f * (float)M_PI;
+				const float v_raw = amp[i];
+				const float v = audio_wave_apply_curve(s, v_raw);
+				const float L = v * L_max;
 
-		const float v_raw = amp[i];
-		const float v = audio_wave_apply_curve(s, v_raw);
-		const float L = v * L_max;
+				const float nx = std::cos(a);
+				const float ny = std::sin(a);
 
-		const float nx = std::cos(a);
-		const float ny = std::sin(a);
+				const float x1 = cx + nx * R_base;
+				const float y1 = cy + ny * R_base;
+				const float x2 = x1 + nx * L;
+				const float y2 = y1 + ny * L;
 
-		const float x1 = cx + nx * R_base;
-		const float y1 = cy + ny * R_base;
-		const float x2 = x1 + nx * L;
-		const float y2 = y1 + ny * L;
+				gs_vertex2f(x1, y1);
+				gs_vertex2f(x2, y2);
 
-		gs_vertex2f(x1, y1);
-		gs_vertex2f(x2, y2);
-
-		if (s->mirror) {
-			const float x3 = x1 - nx * L;
-			const float y3 = y1 - ny * L;
-			gs_vertex2f(x1, y1);
-			gs_vertex2f(x3, y3);
+				if (s->mirror) {
+					gs_vertex2f(x1, y1);
+					gs_vertex2f(x1 - nx * L, y1 - ny * L);
+				}
+			}
+			gs_render_stop(GS_LINES);
 		}
+	} else {
+		if (color_param)
+			audio_wave_set_solid_color(color_param, s->color);
+		gs_render_start(true);
+		for (uint32_t i = 0; i < segments; ++i) {
+			const float u = (float)i / (float)segments;
+			const float a = u * 2.0f * (float)M_PI;
+
+			const float v_raw = amp[i];
+			const float v = audio_wave_apply_curve(s, v_raw);
+			const float L = v * L_max;
+
+			const float nx = std::cos(a);
+			const float ny = std::sin(a);
+
+			const float x1 = cx + nx * R_base;
+			const float y1 = cy + ny * R_base;
+			const float x2 = x1 + nx * L;
+			const float y2 = y1 + ny * L;
+
+			gs_vertex2f(x1, y1);
+			gs_vertex2f(x2, y2);
+
+			if (s->mirror) {
+				const float x3 = x1 - nx * L;
+				const float y3 = y1 - ny * L;
+				gs_vertex2f(x1, y1);
+				gs_vertex2f(x3, y3);
+			}
+		}
+		gs_render_stop(GS_LINES);
 	}
-	gs_render_stop(GS_LINES);
 }
 
 static void circle_theme_draw(audio_wave_source *s, gs_eparam_t *color_param)

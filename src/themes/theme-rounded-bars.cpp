@@ -17,13 +17,9 @@ static const char *k_theme_name_rounded_bars = "Rounded Wobble Bars";
 // Property keys
 // ─────────────────────────────────────────────
 
-
-static const char *RB_PROP_DB_FLOOR = "rb_db_floor";
-static const char *RB_PROP_DB_TARGET = "rb_db_target";
-static const char *RB_PROP_DB_REACT = "rb_db_react"; // from which dB to start reacting
 static const char *RB_PROP_BAR_COUNT = "rb_bar_count";
 static const char *RB_PROP_WOBBLE_INT = "rb_wobble_intensity";
-static const char *RB_PROP_MIRROR_VERT = "rb_mirror_vertical"; // true vertical mirroring
+static const char *RB_PROP_MIRROR_VERT = "rb_mirror_vertical";
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -71,21 +67,17 @@ static void rb_draw_rounded_bar(float cx, float y_bottom, float height, float ba
 	const float y_rect_top = y_top_center;
 	const float y_rect_bottom = y_bottom_center;
 
-	// Rectangle body
 	if (y_rect_bottom > y_rect_top) {
 		gs_render_start(true);
-		// Tri 1
 		gs_vertex2f(left, y_rect_bottom);
 		gs_vertex2f(right, y_rect_bottom);
 		gs_vertex2f(right, y_rect_top);
-		// Tri 2
 		gs_vertex2f(left, y_rect_bottom);
 		gs_vertex2f(right, y_rect_top);
 		gs_vertex2f(left, y_rect_top);
 		gs_render_stop(GS_TRIS);
 	}
 
-	// Top cap (semicircle)
 	{
 		const int segments = std::max(capSegments, 4);
 		const float step = (float)M_PI / (float)segments;
@@ -111,7 +103,6 @@ static void rb_draw_rounded_bar(float cx, float y_bottom, float height, float ba
 		gs_render_stop(GS_TRIS);
 	}
 
-	// Bottom cap (semicircle)
 	{
 		const int segments = std::max(capSegments, 4);
 		const float step = (float)M_PI / (float)segments;
@@ -147,21 +138,20 @@ static void rb_draw_rounded_bar_half_up(float cx, float centerY, float halfHeigh
 		return;
 
 	const float radius = barWidth * 0.5f;
-	const float minHeight = radius; // at least enough for a cap
+	const float minHeight = radius;
 	if (halfHeight < minHeight)
 		halfHeight = minHeight;
 
-	const float y_bottom = centerY; // flat edge at center
+	const float y_bottom = centerY;
 	const float y_top = centerY - halfHeight;
 
 	const float left = cx - radius;
 	const float right = cx + radius;
 
-	const float y_cap_center = y_top + radius; // cap center
+	const float y_cap_center = y_top + radius;
 	const float y_rect_top = y_cap_center;
 	const float y_rect_bottom = y_bottom;
 
-	// Rectangle body (from cap center down to center line)
 	if (y_rect_bottom > y_rect_top) {
 		gs_render_start(true);
 		gs_vertex2f(left, y_rect_bottom);
@@ -174,7 +164,6 @@ static void rb_draw_rounded_bar_half_up(float cx, float centerY, float halfHeigh
 		gs_render_stop(GS_TRIS);
 	}
 
-	// Top cap (rounded)
 	{
 		const int segments = std::max(capSegments, 4);
 		const float step = (float)M_PI / (float)segments;
@@ -214,7 +203,7 @@ static void rb_draw_rounded_bar_half_down(float cx, float centerY, float halfHei
 	if (halfHeight < minHeight)
 		halfHeight = minHeight;
 
-	const float y_top = centerY; // flat edge at center
+	const float y_top = centerY;
 	const float y_bottom = centerY + halfHeight;
 
 	const float left = cx - radius;
@@ -224,7 +213,6 @@ static void rb_draw_rounded_bar_half_down(float cx, float centerY, float halfHei
 	const float y_rect_top = y_top;
 	const float y_rect_bottom = y_cap_center;
 
-	// Rectangle body (from center line down to cap center)
 	if (y_rect_bottom > y_rect_top) {
 		gs_render_start(true);
 		gs_vertex2f(left, y_rect_bottom);
@@ -237,7 +225,6 @@ static void rb_draw_rounded_bar_half_down(float cx, float centerY, float halfHei
 		gs_render_stop(GS_TRIS);
 	}
 
-	// Bottom cap (rounded)
 	{
 		const int segments = std::max(capSegments, 4);
 		const float step = (float)M_PI / (float)segments;
@@ -269,17 +256,12 @@ static void rb_draw_rounded_bar_half_down(float cx, float centerY, float halfHei
 // ─────────────────────────────────────────────
 
 struct rounded_bars_theme_data {
-	std::vector<float> value;    // current displayed extra half-height
-	std::vector<float> velocity; // spring velocity per bar
+	std::vector<float> value;
+	std::vector<float> velocity;
 	bool initialized = false;
-
-	float db_floor = -50.0f;
-	float db_target = -10.0f;
-	float db_react = -40.0f; // from which dB to start reacting
 
 	uint32_t bars = 32;
 
-	// mapped from wobble intensity slider
 	float wobble_stiffness = 0.20f;
 	float wobble_damping = 0.80f;
 
@@ -292,10 +274,6 @@ struct rounded_bars_theme_data {
 
 static void rounded_bars_theme_add_properties(obs_properties_t *props)
 {
-	obs_properties_add_int_slider(props, RB_PROP_DB_FLOOR, "Floor dB (silence)", -60, 0, 1);
-	obs_properties_add_int_slider(props, RB_PROP_DB_REACT, "React from (dB)", -60, 0, 1);
-	obs_properties_add_int_slider(props, RB_PROP_DB_TARGET, "Full Extra Height dB", -60, 0, 1);
-
 	obs_properties_add_int_slider(props, RB_PROP_BAR_COUNT, "Bars", 8, 128, 1);
 
 	obs_properties_add_int_slider(props, RB_PROP_WOBBLE_INT, "Wobble Intensity", 0, 100, 1);
@@ -310,46 +288,23 @@ static void rounded_bars_theme_update(audio_wave_source *s, obs_data_t *settings
 
 	s->theme_style_id = "default";
 
-	int db_floor = aw_get_int_default(settings, RB_PROP_DB_FLOOR, -50);
-	int db_target = aw_get_int_default(settings, RB_PROP_DB_TARGET, -10);
-	int db_react = aw_get_int_default(settings, RB_PROP_DB_REACT, -40);
-
-	db_floor = std::clamp(db_floor, -60, 0);
-	db_target = std::clamp(db_target, -60, 0);
-	db_react = std::clamp(db_react, -60, 0);
-
-	// ensure sensible ordering: floor <= react < target
-	if (db_react < db_floor)
-		db_react = db_floor;
-	if (db_target <= db_react)
-		db_target = db_react + 1;
-
-	int bars = aw_get_int_default(settings, RB_PROP_BAR_COUNT, 32);
-	bars = std::clamp(bars, 8, 128);
-
-	int wobble_int = aw_get_int_default(settings, RB_PROP_WOBBLE_INT, 60);
-	wobble_int = std::clamp(wobble_int, 0, 100);
-
-	bool mirror_vertical = obs_data_get_bool(settings, RB_PROP_MIRROR_VERT);
-
-	// map wobble_int -> spring params
-	// more intensity -> stronger spring & less damping (more wobble)
-	float stiffness = 0.10f + (float)wobble_int * 0.004f; // ~0.10 .. 0.50
-	float damping = 0.95f - (float)wobble_int * 0.004f;   // ~0.95 .. 0.55
-
 	auto *d = static_cast<rounded_bars_theme_data *>(s->theme_data);
 	if (!d) {
 		d = new rounded_bars_theme_data{};
 		s->theme_data = d;
 	}
 
-	d->db_floor = (float)db_floor;
-	d->db_target = (float)db_target;
-	d->db_react = (float)db_react;
-	d->bars = (uint32_t)bars;
-	d->wobble_stiffness = stiffness;
-	d->wobble_damping = damping;
-	d->mirror_vertical = mirror_vertical;
+	const int bars_i = (int)obs_data_get_int(settings, RB_PROP_BAR_COUNT);
+	const int wobble_i = (int)obs_data_get_int(settings, RB_PROP_WOBBLE_INT);
+	const bool mirror_v = obs_data_get_bool(settings, RB_PROP_MIRROR_VERT);
+
+	const int bars_clamped = std::max(8, std::min(128, bars_i));
+	d->bars = (uint32_t)bars_clamped;
+	d->mirror_vertical = mirror_v;
+
+	const float t = std::clamp((float)wobble_i / 100.0f, 0.0f, 1.0f);
+	d->wobble_stiffness = 0.35f + (0.08f - 0.35f) * t;
+	d->wobble_damping = 0.55f + (0.92f - 0.55f) * t;
 
 	d->initialized = false;
 }
@@ -378,18 +333,15 @@ static void rounded_bars_theme_draw(audio_wave_source *s, gs_eparam_t *color_par
 
 	const uint32_t bars = std::max(d->bars, 8u);
 
-	
-	// ensure buffers
-	if (d->value.size() != bars) {
+		if (d->value.size() != bars) {
 		d->value.assign(bars, 0.0f);
 		d->velocity.assign(bars, 0.0f);
 		d->initialized = false;
 	}
 
-	// layout: centered horizontally
 	const float marginX = w * 0.05f;
 	const float usableW = w - marginX * 2.0f;
-	const float gapRatio = 0.20f; // 20% of slot width as gap
+	const float gapRatio = 0.20f;
 
 	const float slotW = usableW / (float)bars;
 	float barWidth = slotW * (1.0f - gapRatio);
@@ -400,18 +352,14 @@ static void rounded_bars_theme_draw(audio_wave_source *s, gs_eparam_t *color_par
 	const float totalW = (float)bars * (barWidth + gap) - gap;
 	const float startX = (w - totalW) * 0.5f;
 
-	// vertically centered system
 	const float centerY = h * 0.5f;
-	const float maxHalfHeight = h * 0.4f; // max extension from center per side
-
-	// base half-height (always visible)
-	const float baseFraction = 0.20f; // 20% of maxHalfHeight as base
+	const float maxHalfHeight = h * 0.4f;
+	const float baseFraction = 0.20f;
 	const float baseHalfHeight = maxHalfHeight * baseFraction;
 	const float maxExtraHalf = maxHalfHeight - baseHalfHeight;
 
 	gs_matrix_push();
 
-	// Per-bar target extra half-height from audio
 	std::vector<float> targetExtraHalf(bars);
 
 	for (uint32_t i = 0; i < bars; ++i) {
@@ -423,25 +371,23 @@ static void rounded_bars_theme_draw(audio_wave_source *s, gs_eparam_t *color_par
 			a = 0.0f;
 
 		float db = rb_db_from_amp(a);
-
 		float extraNorm = 0.0f;
+		const float react_db = s->react_db;
+		const float peak_db = s->peak_db;
 
-		// Only start reacting above db_react
-		if (db > d->db_react) {
-			float t = (db - d->db_react) / (d->db_target - d->db_react + 1e-3f);
+		if (db > react_db) {
+			float t = (db - react_db) / (peak_db - react_db + 1e-3f);
 			t = rb_clamp01(t);
 			extraNorm = t;
 		}
 
-		// Optional global curve (same as other themes)
 		extraNorm = audio_wave_apply_curve(s, extraNorm);
 
 		targetExtraHalf[i] = extraNorm * maxExtraHalf;
 	}
 
-	// Spring / wobble update on extra half-height
 	for (uint32_t i = 0; i < bars; ++i) {
-		float value = d->value[i]; // extra half-height
+		float value = d->value[i];
 		float vel = d->velocity[i];
 		float target = targetExtraHalf[i];
 
@@ -454,7 +400,6 @@ static void rounded_bars_theme_draw(audio_wave_source *s, gs_eparam_t *color_par
 		vel = vel * d->wobble_damping + acc;
 		value += vel;
 
-		// keep in range
 		if (value < 0.0f)
 			value = 0.0f;
 		if (value > maxExtraHalf)
@@ -466,32 +411,25 @@ static void rounded_bars_theme_draw(audio_wave_source *s, gs_eparam_t *color_par
 
 	d->initialized = true;
 
-	// Draw bars (base + extra), centered, optional true vertical mirror
-	if (color_param)
-		{
-			const float tcol = (bar_count <= 1) ? 0.0f : ((float)i / (float)(bar_count - 1));
-			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, tcol));
-		}
-
 	const int capSegments = 12;
 
 	for (uint32_t i = 0; i < bars; ++i) {
+		if (color_param) {
+			const float tcol = (bars <= 1) ? 0.0f : ((float)i / (float)(bars - 1));
+			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, tcol));
+		}
 		const float centerX = startX + (float)i * (barWidth + gap) + barWidth * 0.5f;
 		const float extraHalf = d->value[i];
-
-		// base + extra for each side from center
 		const float halfHeightSide = baseHalfHeight + extraHalf;
 
 		if (halfHeightSide <= 0.5f)
 			continue;
 
 		if (!d->mirror_vertical) {
-			// Non-mirrored: single bar extending UP from center with both ends rounded
 			const float upperBottomY = centerY;
 			const float fullHeight = halfHeightSide;
 			rb_draw_rounded_bar(centerX, upperBottomY, fullHeight, barWidth, capSegments);
 		} else {
-			// Mirrored: upper half and lower half, both sharing a flat edge at center
 			rb_draw_rounded_bar_half_up(centerX, centerY, halfHeightSide, barWidth, capSegments);
 			rb_draw_rounded_bar_half_down(centerX, centerY, halfHeightSide, barWidth, capSegments);
 		}

@@ -154,9 +154,29 @@ static void draw_line_linear(audio_wave_source *s, gs_eparam_t *color_param, boo
 		return smooth ? amp_smooth[x] : amp[x];
 	};
 
-	if (color_param)
-		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
-gs_render_start(true);
+	if (color_param && !s->gradient_enabled)
+		audio_wave_set_solid_color(color_param, s->color);
+
+	if (s->gradient_enabled && color_param) {
+		const uint32_t bins = 64;
+		for (uint32_t b = 0; b < bins; ++b) {
+			const uint32_t x0 = (uint32_t)((uint64_t)b * width_u / bins);
+			const uint32_t x1 = (uint32_t)((uint64_t)(b + 1) * width_u / bins);
+			if (x1 <= x0)
+				continue;
+			const float tcol = (width_u <= 1) ? 0.0f : ((float)x0 / (float)(width_u - 1));
+			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, tcol));
+			gs_render_start(true);
+			for (uint32_t x = x0; x < x1; ++x) {
+				const float v_raw = get_amp(x);
+				const float v = audio_wave_apply_curve(s, v_raw);
+				const float y = mid_y - v * (mid_y - top_margin);
+				gs_vertex2f((float)x, y);
+			}
+			gs_render_stop(GS_LINESTRIP);
+		}
+	} else {
+		gs_render_start(true);
 	for (uint32_t x = 0; x < width_u; ++x) {
 		const float v_raw = get_amp(x);
 		const float v = audio_wave_apply_curve(s, v_raw);
@@ -164,19 +184,41 @@ gs_render_start(true);
 		gs_vertex2f((float)x, y);
 	}
 	gs_render_stop(GS_LINESTRIP);
+	}
 
 	if (!s->mirror)
 		return;
 
-	gs_render_start(true);
-	for (uint32_t x = 0; x < width_u; ++x) {
-		const float v_raw = get_amp(x);
-		const float v = audio_wave_apply_curve(s, v_raw);
-		const float y = mid_y - v * (mid_y - top_margin);
-		const float y_m = mid_y + (mid_y - y);
-		gs_vertex2f((float)x, y_m);
+	if (s->gradient_enabled && color_param) {
+		const uint32_t bins = 64;
+		for (uint32_t b = 0; b < bins; ++b) {
+			const uint32_t x0 = (uint32_t)((uint64_t)b * width_u / bins);
+			const uint32_t x1 = (uint32_t)((uint64_t)(b + 1) * width_u / bins);
+			if (x1 <= x0)
+				continue;
+			const float tcol = (width_u <= 1) ? 0.0f : ((float)x0 / (float)(width_u - 1));
+			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, tcol));
+			gs_render_start(true);
+			for (uint32_t x = x0; x < x1; ++x) {
+				const float v_raw = get_amp(x);
+				const float v = audio_wave_apply_curve(s, v_raw);
+				const float y = mid_y - v * (mid_y - top_margin);
+				const float y_m = mid_y + (mid_y - y);
+				gs_vertex2f((float)x, y_m);
+			}
+			gs_render_stop(GS_LINESTRIP);
+		}
+	} else {
+		gs_render_start(true);
+		for (uint32_t x = 0; x < width_u; ++x) {
+			const float v_raw = get_amp(x);
+			const float v = audio_wave_apply_curve(s, v_raw);
+			const float y = mid_y - v * (mid_y - top_margin);
+			const float y_m = mid_y + (mid_y - y);
+			gs_vertex2f((float)x, y_m);
+		}
+		gs_render_stop(GS_LINESTRIP);
 	}
-	gs_render_stop(GS_LINESTRIP);
 }
 
 static void draw_line_bars(audio_wave_source *s, gs_eparam_t *color_param)
@@ -199,12 +241,33 @@ static void draw_line_bars(audio_wave_source *s, gs_eparam_t *color_param)
 		amp[x] = (idx < frames) ? s->wave[idx] : 0.0f;
 	}
 
-	if (color_param)
-		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
-const uint32_t step = 3;
+	const uint32_t step = 3;
+
+	if (!s->gradient_enabled && color_param)
+		audio_wave_set_solid_color(color_param, s->color);
+
+	int cur_bin = -1;
+	const int bins = 64;
+	cur_bin = 0;
+
+	if (s->gradient_enabled && color_param) {
+		// start with first bin color
+		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.0f));
+		cur_bin = 0;
+	}
 
 	gs_render_start(true);
 	for (uint32_t x = 0; x < width_u; x += step) {
+		if (s->gradient_enabled && color_param) {
+			const float tcol = (width_u <= 1) ? 0.0f : ((float)x / (float)(width_u - 1));
+			const int b = std::clamp((int)std::floor(tcol * (float)(bins - 1) + 0.5f), 0, bins - 1);
+			if (b != cur_bin) {
+				gs_render_stop(GS_LINES);
+				audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, (float)b / (float)(bins - 1)));
+				gs_render_start(true);
+				cur_bin = b;
+			}
+		}
 		const float v_raw = amp[x];
 		const float v = audio_wave_apply_curve(s, v_raw);
 		const float y = mid_y - v * (mid_y - 4.0f);
@@ -287,42 +350,86 @@ static void draw_line_filled(audio_wave_source *s, gs_eparam_t *color_param)
 
 	d->initialized = true;
 
-	if (color_param)
-		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
+	if (color_param && s->gradient_enabled) {
+		const uint32_t bins = 64;
+		for (uint32_t b = 0; b < bins; ++b) {
+			const uint32_t x0 = (uint32_t)((uint64_t)b * (width_u - 1) / bins);
+			const uint32_t x1 = (uint32_t)((uint64_t)(b + 1) * (width_u - 1) / bins);
+			if (x1 <= x0)
+				continue;
 
-	gs_render_start(true);
-	for (uint32_t x = 0; x + 1 < width_u; ++x) {
-		const float y1 = ys[x];
-		const float y2 = ys[x + 1];
+			const float tcol = (bins <= 1) ? 0.0f : ((float)b / (float)(bins - 1));
+			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, tcol));
 
-		gs_vertex2f((float)x, baseline);
-		gs_vertex2f((float)x, y1);
-		gs_vertex2f((float)(x + 1), baseline);
+			gs_render_start(true);
+			for (uint32_t x = x0; x < x1; ++x) {
+				const float y1 = ys[x];
+				const float y2 = ys[x + 1];
 
-		gs_vertex2f((float)(x + 1), baseline);
-		gs_vertex2f((float)x, y1);
-		gs_vertex2f((float)(x + 1), y2);
+				gs_vertex2f((float)x, baseline);
+				gs_vertex2f((float)x, y1);
+				gs_vertex2f((float)(x + 1), baseline);
 
-		if (s->mirror) {
-			float y1m = 2.0f * mid_y - y1;
-			float y2m = 2.0f * mid_y - y2;
+				gs_vertex2f((float)(x + 1), baseline);
+				gs_vertex2f((float)x, y1);
+				gs_vertex2f((float)(x + 1), y2);
 
-			y1m = std::clamp(y1m, 0.0f, h);
-			y2m = std::clamp(y2m, 0.0f, h);
+				if (s->mirror) {
+					float y1m = 2.0f * mid_y - y1;
+					float y2m = 2.0f * mid_y - y2;
 
-			gs_vertex2f((float)x, 0.0f);
-			gs_vertex2f((float)x, y1m);
-			gs_vertex2f((float)(x + 1), 0.0f);
+					y1m = std::clamp(y1m, 0.0f, h);
+					y2m = std::clamp(y2m, 0.0f, h);
 
-			gs_vertex2f((float)(x + 1), 0.0f);
-			gs_vertex2f((float)x, y1m);
-			gs_vertex2f((float)(x + 1), y2m);
+					gs_vertex2f((float)x, 0.0f);
+					gs_vertex2f((float)x, y1m);
+					gs_vertex2f((float)(x + 1), 0.0f);
+
+					gs_vertex2f((float)(x + 1), 0.0f);
+					gs_vertex2f((float)x, y1m);
+					gs_vertex2f((float)(x + 1), y2m);
+				}
+			}
+			gs_render_stop(GS_TRIS);
 		}
-	}
-	gs_render_stop(GS_TRIS);
+	} else {
+		if (color_param)
+			audio_wave_set_solid_color(color_param, s->color);
 
-	if (color_param)
-		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
+		gs_render_start(true);
+		for (uint32_t x = 0; x + 1 < width_u; ++x) {
+			const float y1 = ys[x];
+			const float y2 = ys[x + 1];
+
+			gs_vertex2f((float)x, baseline);
+			gs_vertex2f((float)x, y1);
+			gs_vertex2f((float)(x + 1), baseline);
+
+			gs_vertex2f((float)(x + 1), baseline);
+			gs_vertex2f((float)x, y1);
+			gs_vertex2f((float)(x + 1), y2);
+
+			if (s->mirror) {
+				float y1m = 2.0f * mid_y - y1;
+				float y2m = 2.0f * mid_y - y2;
+
+				y1m = std::clamp(y1m, 0.0f, h);
+				y2m = std::clamp(y2m, 0.0f, h);
+
+				gs_vertex2f((float)x, 0.0f);
+				gs_vertex2f((float)x, y1m);
+				gs_vertex2f((float)(x + 1), 0.0f);
+
+				gs_vertex2f((float)(x + 1), 0.0f);
+				gs_vertex2f((float)x, y1m);
+				gs_vertex2f((float)(x + 1), y2m);
+			}
+		}
+		gs_render_stop(GS_TRIS);
+	}
+
+	if (color_param && !s->gradient_enabled)
+		audio_wave_set_solid_color(color_param, s->color);
 
 	int thick = d->outline_thickness;
 	if (thick < 1)
@@ -367,9 +474,14 @@ static void line_theme_draw(audio_wave_source *s, gs_eparam_t *color_param)
 	gs_matrix_push();
 
 	if (frames < 2) {
-		if (color_param)
-		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
-gs_render_start(true);
+		if (color_param) {
+			if (s->gradient_enabled)
+				audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
+			else
+				audio_wave_set_solid_color(color_param, s->color);
+		}
+
+		gs_render_start(true);
 		for (uint32_t x = 0; x < (uint32_t)w; ++x)
 			gs_vertex2f((float)x, mid_y);
 		gs_render_stop(GS_LINESTRIP);

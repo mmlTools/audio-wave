@@ -82,6 +82,13 @@ static void destroy(audio_wave_source *s)
 	s->theme_data = nullptr;
 }
 
+static inline float sc_db_from_amp(float a)
+{
+	if (a <= 1e-6f)
+		return -120.0f;
+	return 20.0f * log10f(a);
+}
+
 static inline float sample_wave(const audio_wave_source *s, float t)
 {
 	if (!s || s->wave.empty())
@@ -133,12 +140,20 @@ static void draw(audio_wave_source *s, gs_eparam_t *color_param)
 	for (int c = 0; c < cols; ++c) {
 		const float t = (cols <= 1) ? 0.0f : ((float)c / (float)(cols - 1));
 		float amp = sample_wave(s, d->mirror ? (1.0f - t) : t);
-		if (amp < 0.0f) amp = 0.0f;
-		if (amp > 1.0f) amp = 1.0f;
+		amp = std::clamp(amp, 0.0f, 1.0f);
 
-		const int on = (int)std::lround(amp * (float)stacks);
-		if (on <= 0)
-			continue;
+		// Convert amplitude to dBFS and map to [0..1] using global React/Peak dB
+		const float db = sc_db_from_amp(amp);
+		float norm = 0.0f;
+		if (db > s->react_db) {
+			norm = (db - s->react_db) / (s->peak_db - s->react_db + 1e-3f);
+			norm = std::clamp(norm, 0.0f, 1.0f);
+		}
+		norm = audio_wave_apply_curve(s, norm);
+
+		// First row always visible
+		int on = 1 + (int)std::lround(norm * (float)(stacks - 1));
+		on = std::clamp(on, 1, stacks);
 
 		const float x0 = (float)c * col_w + x_pad;
 		const float x1 = x0 + block_w;

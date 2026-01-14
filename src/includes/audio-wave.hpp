@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <array>
 #include <algorithm>
+#include <cmath>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -50,7 +51,16 @@ struct audio_wave_source {
 	std::vector<float> samples_left;
 	std::vector<float> samples_right;
 	size_t num_samples = 0;
-	std::vector<float> wave; // normalized 0..1 amplitudes, built from samples
+	// Wave data:
+	//   wave_raw: instantaneous (per-frame) normalized 0..1 built from samples
+	//   wave:     smoothed values used by themes for rendering
+	std::vector<float> wave_raw;
+	std::vector<float> wave;
+
+	// Smoothing (attack/release in milliseconds). Applied to wave_raw -> wave.
+	float attack_ms = 35.0f;   // rising (expand)
+	float release_ms = 180.0f; // falling (retract)
+	uint64_t last_wave_ts_ns = 0;
 
 	// Core visual parameters
 	int width = 800;

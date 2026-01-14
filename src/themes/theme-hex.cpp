@@ -10,8 +10,20 @@
 static const char *k_theme_id_hex = "hexagon";
 static const char *k_theme_name_hex = "Hexagon";
 static const char *HEX_PROP_STYLE = "hex_style";
-static const char *HEX_PROP_COLOR = "hex_color";
 static const char *HEX_PROP_MIRROR = "hex_mirror";
+static const char *P_DENSITY = "shape_density";
+
+static bool hex_style_modified(obs_properties_t *props, obs_property_t *, obs_data_t *settings)
+{
+	const char *style_id = obs_data_get_string(settings, HEX_PROP_STYLE);
+	const bool is_rays = (style_id && strcmp(style_id, "rays") == 0);
+
+	obs_property_t *mirror = obs_properties_get(props, HEX_PROP_MIRROR);
+	if (mirror)
+		obs_property_set_visible(mirror, is_rays);
+
+	return true;
+}
 
 static void hex_theme_add_properties(obs_properties_t *props)
 {
@@ -20,9 +32,11 @@ static void hex_theme_add_properties(obs_properties_t *props)
 
 	obs_property_list_add_string(style, "Orbit", "orbit");
 	obs_property_list_add_string(style, "Rays", "rays");
+	obs_property_set_modified_callback(style, hex_style_modified);
 
-	obs_properties_add_color(props, HEX_PROP_COLOR, "Color");
-	obs_properties_add_bool(props, HEX_PROP_MIRROR, "Double-sided rays");
+	obs_property_t *mirror = obs_properties_add_bool(props, HEX_PROP_MIRROR, "Double-sided rays");
+	obs_property_set_visible(mirror, false);
+	obs_properties_add_int_slider(props, P_DENSITY, "Shape Density (%)", 10, 300, 5);
 }
 
 static void hex_theme_update(audio_wave_source *s, obs_data_t *settings)
@@ -36,19 +50,11 @@ static void hex_theme_update(audio_wave_source *s, obs_data_t *settings)
 
 	s->theme_style_id = style_id;
 
-	uint32_t color = (uint32_t)aw_get_int_default(settings, HEX_PROP_COLOR, 0);
-	if (color == 0)
-		color = 0x00FFCC;
+	int density = aw_get_int_default(settings, P_DENSITY, 120);
+	density = std::clamp(density, 10, 300);
+	s->frame_density = density;
 
-	s->color = color;
-
-	s->colors.clear();
-	s->colors.push_back(audio_wave_named_color{"hex", color});
-
-	if (s->frame_density < 50)
-		s->frame_density = 50;
-
-	s->mirror = obs_data_get_bool(settings, HEX_PROP_MIRROR);
+	s->mirror = (strcmp(style_id, "rays") == 0) ? obs_data_get_bool(settings, HEX_PROP_MIRROR) : false;
 }
 
 // ─────────────────────────────────────────────
@@ -181,22 +187,15 @@ static void draw_hex_orbit(audio_wave_source *s, gs_eparam_t *color_param)
 		return amp_smooth[i];
 	};
 
-	const uint32_t hex_color = audio_wave_get_color(s, 0, s->color);
-	if (color_param)
-		audio_wave_set_solid_color(color_param, hex_color);
-
-	gs_render_start(true);
+	std::vector<float> px(segments), py(segments);
+	const float cx = (float)s->width * 0.5f;
+	const float cy = (float)s->height * 0.5f;
 	for (uint32_t i = 0; i < segments; ++i) {
 		const float v_raw = get_amp(i);
 		const float v = audio_wave_apply_curve(s, v_raw);
 		const float len = v * max_len;
-
-		const float cx = (float)s->width * 0.5f;
-		const float cy = (float)s->height * 0.5f;
-
 		float x = base_x[i];
 		float y = base_y[i];
-
 		float dx = x - cx;
 		float dy = y - cy;
 		float l = std::sqrt(dx * dx + dy * dy);
@@ -207,13 +206,39 @@ static void draw_hex_orbit(audio_wave_source *s, gs_eparam_t *color_param)
 			dx = 0.0f;
 			dy = -1.0f;
 		}
-
-		const float x2 = x + dx * len;
-		const float y2 = y + dy * len;
-
-		gs_vertex2f(x2, y2);
+		px[i] = x + dx * len;
+		py[i] = y + dy * len;
 	}
-	gs_render_stop(GS_LINESTRIP);
+
+	if (color_param && s->gradient_enabled) {
+		const uint32_t bins = 64;
+		for (uint32_t b = 0; b < bins; ++b) {
+			const uint32_t i0 = (uint32_t)((uint64_t)b * segments / bins);
+			const uint32_t i1 = (uint32_t)((uint64_t)(b + 1) * segments / bins);
+			if (i1 <= i0)
+				continue;
+			const float tcol = (bins <= 1) ? 0.0f : ((float)b / (float)(bins - 1));
+			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, tcol));
+			gs_render_start(true);
+			for (uint32_t i = i0; i < i1; ++i) {
+				const uint32_t j = (i + 1) % segments;
+				gs_vertex2f(px[i], py[i]);
+				gs_vertex2f(px[j], py[j]);
+			}
+			gs_render_stop(GS_LINES);
+		}
+	} else {
+		const uint32_t hex_color = audio_wave_get_color(s, 0, s->color);
+		if (color_param)
+			audio_wave_set_solid_color(color_param, hex_color);
+		gs_render_start(true);
+		for (uint32_t i = 0; i < segments; ++i) {
+			const uint32_t j = (i + 1) % segments;
+			gs_vertex2f(px[i], py[i]);
+			gs_vertex2f(px[j], py[j]);
+		}
+		gs_render_stop(GS_LINES);
+	}
 }
 
 static void draw_hex_rays(audio_wave_source *s, gs_eparam_t *color_param)
@@ -255,32 +280,66 @@ static void draw_hex_rays(audio_wave_source *s, gs_eparam_t *color_param)
 		amp[i] = (idx < frames) ? s->wave[idx] : 0.0f;
 	}
 
-	const uint32_t hex_color = audio_wave_get_color(s, 0, s->color);
-	if (color_param)
-		audio_wave_set_solid_color(color_param, hex_color);
+	if (color_param && s->gradient_enabled) {
+		const uint32_t bins = 64;
+		for (uint32_t b = 0; b < bins; ++b) {
+			const uint32_t i0 = (uint32_t)((uint64_t)b * segments / bins);
+			const uint32_t i1 = (uint32_t)((uint64_t)(b + 1) * segments / bins);
+			if (i1 <= i0)
+				continue;
+			const float tcol = (bins <= 1) ? 0.0f : ((float)b / (float)(bins - 1));
+			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, tcol));
+			gs_render_start(true);
+			for (uint32_t i = i0; i < i1; ++i) {
+				const float v_raw = amp[i];
+				const float v = audio_wave_apply_curve(s, v_raw);
+				const float len = v * max_len;
 
-	gs_render_start(true);
-	for (uint32_t i = 0; i < segments; ++i) {
-		const float v_raw = amp[i];
-		const float v = audio_wave_apply_curve(s, v_raw);
-		const float len = v * max_len;
+				const float x1 = base_x[i];
+				const float y1 = base_y[i];
+				const float x2 = x1 + nx[i] * len;
+				const float y2 = y1 + ny[i] * len;
 
-		const float x1 = base_x[i];
-		const float y1 = base_y[i];
-		const float x2 = x1 + nx[i] * len;
-		const float y2 = y1 + ny[i] * len;
+				gs_vertex2f(x1, y1);
+				gs_vertex2f(x2, y2);
 
-		gs_vertex2f(x1, y1);
-		gs_vertex2f(x2, y2);
-
-		if (s->mirror) {
-			const float x3 = x1 - nx[i] * len;
-			const float y3 = y1 - ny[i] * len;
-			gs_vertex2f(x1, y1);
-			gs_vertex2f(x3, y3);
+				if (s->mirror) {
+					const float x3 = x1 - nx[i] * len;
+					const float y3 = y1 - ny[i] * len;
+					gs_vertex2f(x1, y1);
+					gs_vertex2f(x3, y3);
+				}
+			}
+			gs_render_stop(GS_LINES);
 		}
+	} else {
+		const uint32_t hex_color = audio_wave_get_color(s, 0, s->color);
+		if (color_param)
+			audio_wave_set_solid_color(color_param, hex_color);
+
+		gs_render_start(true);
+		for (uint32_t i = 0; i < segments; ++i) {
+			const float v_raw = amp[i];
+			const float v = audio_wave_apply_curve(s, v_raw);
+			const float len = v * max_len;
+
+			const float x1 = base_x[i];
+			const float y1 = base_y[i];
+			const float x2 = x1 + nx[i] * len;
+			const float y2 = y1 + ny[i] * len;
+
+			gs_vertex2f(x1, y1);
+			gs_vertex2f(x2, y2);
+
+			if (s->mirror) {
+				const float x3 = x1 - nx[i] * len;
+				const float y3 = y1 - ny[i] * len;
+				gs_vertex2f(x1, y1);
+				gs_vertex2f(x3, y3);
+			}
+		}
+		gs_render_stop(GS_LINES);
 	}
-	gs_render_stop(GS_LINES);
 }
 
 static void hex_theme_draw(audio_wave_source *s, gs_eparam_t *color_param)
