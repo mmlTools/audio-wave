@@ -71,6 +71,13 @@ struct audio_wave_source {
 	// Opaque per-instance data owned by the active theme
 	void *theme_data = nullptr;
 	const audio_wave_theme *theme = nullptr;
+
+	float rot_speed;
+	float hue_speed;
+	int thickness;
+	float sensitivity;
+	float fluidity;
+	float inner_gap;
 };
 
 // Small helper: safe color access with fallback

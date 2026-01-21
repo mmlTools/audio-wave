@@ -15,6 +15,8 @@
 #include "theme-cartoonframe.hpp"
 #include "theme-lightning.hpp"
 #include "theme-rounded-bars.hpp"
+#include "theme-stacked-columns.hpp"
+#include "theme-pulse.hpp"
 
 static bool g_themes_registered = false;
 
@@ -40,4 +42,6 @@ void audio_wave_register_builtin_themes()
 	audio_wave_register_cartoonframe_theme();
 	audio_wave_register_lightning_theme();
 	audio_wave_register_rounded_bars_theme();
+	audio_wave_register_stacked_columns_theme();
+	audio_wave_register_pulse_theme();
 }
