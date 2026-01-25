@@ -11,13 +11,15 @@
 static const char *k_theme_id_line = "line";
 static const char *k_theme_name_line = "Line";
 static const char *LINE_PROP_STYLE = "line_style";
-static const char *LINE_PROP_COLOR = "line_color";
-static const char *LINE_PROP_FILL_COLOR = "line_fill_color";
 static const char *LINE_PROP_MIRROR = "line_mirror";
+static const char *LINE_PROP_SIDE_MIRROR = "line_side_mirror";
+static const char *LINE_PROP_DOUBLE_CENTERED = "line_double_centered";
 static const char *LINE_PROP_CURVE_COUNT = "line_curve_count";
 static const char *LINE_PROP_OUTLINE_THICK = "line_outline_thickness";
 
 struct line_theme_data {
+	bool side_mirror = false;
+	bool double_centered = false;
 	std::vector<float> prev_y;
 	bool initialized = false;
 	int curve_count = 3;
@@ -33,17 +35,9 @@ static bool line_style_modified(obs_properties_t *props, obs_property_t *propert
 
 	const char *style_id = obs_data_get_string(settings, LINE_PROP_STYLE);
 	const bool is_filled = (style_id && std::strcmp(style_id, "filled") == 0);
-
-	obs_property_t *fill_color = obs_properties_get(props, LINE_PROP_FILL_COLOR);
 	obs_property_t *curve_cnt = obs_properties_get(props, LINE_PROP_CURVE_COUNT);
-	obs_property_t *outline_th = obs_properties_get(props, LINE_PROP_OUTLINE_THICK);
-
-	if (fill_color)
-		obs_property_set_visible(fill_color, is_filled);
 	if (curve_cnt)
 		obs_property_set_visible(curve_cnt, is_filled);
-	if (outline_th)
-		obs_property_set_visible(outline_th, is_filled);
 
 	return true;
 }
@@ -59,24 +53,14 @@ static void line_theme_add_properties(obs_properties_t *props)
 
 	obs_property_set_modified_callback(style, line_style_modified);
 
-	obs_property_t *outline_color = obs_properties_add_color(props, LINE_PROP_COLOR, "Outline Color");
-
-	obs_property_t *fill_color = obs_properties_add_color(props, LINE_PROP_FILL_COLOR, "Fill Color");
-
-	obs_property_t *mirror = obs_properties_add_bool(props, LINE_PROP_MIRROR, "Mirror vertically");
+	/* Legacy: LINE_PROP_MIRROR ("line_mirror") kept for backward compatibility (not shown). */
+	obs_properties_add_bool(props, LINE_PROP_SIDE_MIRROR, "Side mirror");
+	obs_properties_add_bool(props, LINE_PROP_DOUBLE_CENTERED, "Double-sided centered");
 
 	obs_property_t *curve_cnt =
 		obs_properties_add_int_slider(props, LINE_PROP_CURVE_COUNT, "Curve Count", 1, 16, 1);
 
-	obs_property_t *outline_th =
-		obs_properties_add_int_slider(props, LINE_PROP_OUTLINE_THICK, "Outline Thickness", 1, 8, 1);
-
-	obs_property_set_visible(fill_color, false);
 	obs_property_set_visible(curve_cnt, false);
-	obs_property_set_visible(outline_th, false);
-
-	UNUSED_PARAMETER(outline_color);
-	UNUSED_PARAMETER(mirror);
 }
 
 static void line_theme_update(audio_wave_source *s, obs_data_t *settings)
@@ -90,38 +74,32 @@ static void line_theme_update(audio_wave_source *s, obs_data_t *settings)
 
 	s->theme_style_id = style_id;
 
-	uint32_t outline = (uint32_t)aw_get_int_default(settings, LINE_PROP_COLOR, 0);
-	if (outline == 0)
-		outline = 0xFF0000;
-
-	uint32_t fill = (uint32_t)aw_get_int_default(settings, LINE_PROP_FILL_COLOR, 0);
-	if (fill == 0)
-		fill = 0x001A4F;
-
-	s->color = outline;
-
-	s->colors.clear();
-	s->colors.push_back(audio_wave_named_color{"outline", outline});
-	s->colors.push_back(audio_wave_named_color{"fill", fill});
-
-	s->mirror = obs_data_get_bool(settings, LINE_PROP_MIRROR);
-
-	int curve_count = aw_get_int_default(settings, LINE_PROP_CURVE_COUNT, 3);
-	curve_count = std::clamp(curve_count, 1, 16);
-
-	int thick = aw_get_int_default(settings, LINE_PROP_OUTLINE_THICK, 2);
-	thick = std::clamp(thick, 1, 8);
-
+	// Ensure theme data exists before we write to it
 	auto *d = static_cast<line_theme_data *>(s->theme_data);
 	if (!d) {
 		d = new line_theme_data{};
 		s->theme_data = d;
 	}
 
+
+	// Side mirror (top/bottom). Prefer new key; fall back to legacy "line_mirror" if unset.
+	const bool side_mirror = obs_data_has_user_value(settings, LINE_PROP_SIDE_MIRROR)
+		? obs_data_get_bool(settings, LINE_PROP_SIDE_MIRROR)
+		: obs_data_get_bool(settings, LINE_PROP_MIRROR);
+
+	d->side_mirror = side_mirror;
+	d->double_centered = obs_data_get_bool(settings, LINE_PROP_DOUBLE_CENTERED);
+
+	// Keep s->mirror for legacy behavior (used only by this theme)
+	s->mirror = side_mirror;
+
+	int curve_count = aw_get_int_default(settings, LINE_PROP_CURVE_COUNT, 3);
+	curve_count = std::clamp(curve_count, 1, 16);
+
 	d->curve_count = curve_count;
-	d->outline_thickness = thick;
 	d->initialized = false;
 }
+
 
 static inline size_t sample_index_for_x(const line_theme_data *d, uint32_t x, uint32_t width_u, size_t frames)
 {
@@ -139,6 +117,35 @@ static inline size_t sample_index_for_x(const line_theme_data *d, uint32_t x, ui
 		idx = frames - 1;
 
 	return idx;
+}
+
+static inline float sample_at_x(const audio_wave_source *s, const line_theme_data *d, uint32_t x, uint32_t width_u)
+{
+    const size_t frames = s ? s->wave.size() : 0;
+    if (!s || !frames || width_u <= 1)
+        return 0.0f;
+
+    // Standard: time progresses left -> right.
+    // Double-sided centered: center is "now"; left mirrors right in time-domain.
+    float u = (float)x / (float)(width_u - 1); // 0..1
+    if (d && d->double_centered) {
+        const float rel = std::fabs(u - 0.5f) * 2.0f; // 0 at center, 1 at edges
+        u = rel; // sample symmetrical
+    }
+
+    const int curve_count = d ? std::max(d->curve_count, 1) : 1;
+    const float pos = u * (float)curve_count;
+    const float frac = pos - std::floor(pos);
+    const float f_idx = frac * (float)(frames - 1);
+
+    size_t idx = (size_t)f_idx;
+    if (idx >= frames)
+        idx = frames - 1;
+
+    float amp = s->wave[idx];
+    if (!std::isfinite(amp))
+        amp = 0.0f;
+    return std::clamp(amp, 0.0f, 1.0f);
 }
 
 // ─────────────────────────────────────────────
@@ -182,10 +189,29 @@ static void draw_line_linear(audio_wave_source *s, gs_eparam_t *color_param, boo
 		return smooth ? amp_smooth[x] : amp[x];
 	};
 
-	if (color_param)
+	if (color_param && !s->gradient_enabled)
 		audio_wave_set_solid_color(color_param, s->color);
 
-	gs_render_start(true);
+	if (s->gradient_enabled && color_param) {
+		const uint32_t bins = 64;
+		for (uint32_t b = 0; b < bins; ++b) {
+			const uint32_t x0 = (uint32_t)((uint64_t)b * width_u / bins);
+			const uint32_t x1 = (uint32_t)((uint64_t)(b + 1) * width_u / bins);
+			if (x1 <= x0)
+				continue;
+			const float tcol = (width_u <= 1) ? 0.0f : ((float)x0 / (float)(width_u - 1));
+			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, tcol));
+			gs_render_start(true);
+			for (uint32_t x = x0; x < x1; ++x) {
+				const float v_raw = get_amp(x);
+				const float v = audio_wave_apply_curve(s, v_raw);
+				const float y = mid_y - v * (mid_y - top_margin);
+				gs_vertex2f((float)x, y);
+			}
+			gs_render_stop(GS_LINESTRIP);
+		}
+	} else {
+		gs_render_start(true);
 	for (uint32_t x = 0; x < width_u; ++x) {
 		const float v_raw = get_amp(x);
 		const float v = audio_wave_apply_curve(s, v_raw);
@@ -193,19 +219,41 @@ static void draw_line_linear(audio_wave_source *s, gs_eparam_t *color_param, boo
 		gs_vertex2f((float)x, y);
 	}
 	gs_render_stop(GS_LINESTRIP);
+	}
 
 	if (!s->mirror)
 		return;
 
-	gs_render_start(true);
-	for (uint32_t x = 0; x < width_u; ++x) {
-		const float v_raw = get_amp(x);
-		const float v = audio_wave_apply_curve(s, v_raw);
-		const float y = mid_y - v * (mid_y - top_margin);
-		const float y_m = mid_y + (mid_y - y);
-		gs_vertex2f((float)x, y_m);
+	if (s->gradient_enabled && color_param) {
+		const uint32_t bins = 64;
+		for (uint32_t b = 0; b < bins; ++b) {
+			const uint32_t x0 = (uint32_t)((uint64_t)b * width_u / bins);
+			const uint32_t x1 = (uint32_t)((uint64_t)(b + 1) * width_u / bins);
+			if (x1 <= x0)
+				continue;
+			const float tcol = (width_u <= 1) ? 0.0f : ((float)x0 / (float)(width_u - 1));
+			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, tcol));
+			gs_render_start(true);
+			for (uint32_t x = x0; x < x1; ++x) {
+				const float v_raw = get_amp(x);
+				const float v = audio_wave_apply_curve(s, v_raw);
+				const float y = mid_y - v * (mid_y - top_margin);
+				const float y_m = mid_y + (mid_y - y);
+				gs_vertex2f((float)x, y_m);
+			}
+			gs_render_stop(GS_LINESTRIP);
+		}
+	} else {
+		gs_render_start(true);
+		for (uint32_t x = 0; x < width_u; ++x) {
+			const float v_raw = get_amp(x);
+			const float v = audio_wave_apply_curve(s, v_raw);
+			const float y = mid_y - v * (mid_y - top_margin);
+			const float y_m = mid_y + (mid_y - y);
+			gs_vertex2f((float)x, y_m);
+		}
+		gs_render_stop(GS_LINESTRIP);
 	}
-	gs_render_stop(GS_LINESTRIP);
 }
 
 static void draw_line_bars(audio_wave_source *s, gs_eparam_t *color_param)
@@ -221,6 +269,12 @@ static void draw_line_bars(audio_wave_source *s, gs_eparam_t *color_param)
 	const uint32_t width_u = (uint32_t)w;
 	if (width_u == 0)
 		return;
+	auto *d = static_cast<line_theme_data *>(s->theme_data);
+	if (!d) {
+		d = new line_theme_data{};
+		s->theme_data = d;
+	}
+
 
 	std::vector<float> amp(width_u);
 	for (uint32_t x = 0; x < width_u; ++x) {
@@ -228,13 +282,33 @@ static void draw_line_bars(audio_wave_source *s, gs_eparam_t *color_param)
 		amp[x] = (idx < frames) ? s->wave[idx] : 0.0f;
 	}
 
-	if (color_param)
+	const uint32_t step = 3;
+
+	if (!s->gradient_enabled && color_param)
 		audio_wave_set_solid_color(color_param, s->color);
 
-	const uint32_t step = 3;
+	int cur_bin = -1;
+	const int bins = 64;
+	cur_bin = 0;
+
+	if (s->gradient_enabled && color_param) {
+		// start with first bin color
+		audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.0f));
+		cur_bin = 0;
+	}
 
 	gs_render_start(true);
 	for (uint32_t x = 0; x < width_u; x += step) {
+		if (s->gradient_enabled && color_param) {
+			const float tcol = (width_u <= 1) ? 0.0f : ((float)x / (float)(width_u - 1));
+			const int b = std::clamp((int)std::floor(tcol * (float)(bins - 1) + 0.5f), 0, bins - 1);
+			if (b != cur_bin) {
+				gs_render_stop(GS_LINES);
+				audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, (float)b / (float)(bins - 1)));
+				gs_render_start(true);
+				cur_bin = b;
+			}
+		}
 		const float v_raw = amp[x];
 		const float v = audio_wave_apply_curve(s, v_raw);
 		const float y = mid_y - v * (mid_y - 4.0f);
@@ -242,7 +316,7 @@ static void draw_line_bars(audio_wave_source *s, gs_eparam_t *color_param)
 		gs_vertex2f((float)x, mid_y);
 		gs_vertex2f((float)x, y);
 
-		if (s->mirror) {
+		if (d->side_mirror) {
 			const float y_m = mid_y + (mid_y - y);
 			gs_vertex2f((float)x, mid_y);
 			gs_vertex2f((float)x, y_m);
@@ -259,9 +333,10 @@ static void draw_line_filled(audio_wave_source *s, gs_eparam_t *color_param)
 
 	const float w = (float)s->width;
 	const float h = (float)s->height;
-	const float baseline = h;
 	const float top_margin = 2.0f;
 	const float mid_y = h * 0.5f;
+	const float baseline_bottom = h;
+	const float baseline_center = mid_y;
 
 	const uint32_t width_u = (uint32_t)w;
 	if (width_u == 0)
@@ -273,13 +348,11 @@ static void draw_line_filled(audio_wave_source *s, gs_eparam_t *color_param)
 		s->theme_data = d;
 	}
 
-	const uint32_t outline_color = audio_wave_get_color(s, 0, s->color);
-	const uint32_t fill_color = audio_wave_get_color(s, 1, outline_color);
+	const float baseline = d->side_mirror ? baseline_center : baseline_bottom;
 
 	std::vector<float> amp(width_u);
 	for (uint32_t x = 0; x < width_u; ++x) {
-		const size_t idx = sample_index_for_x(d, x, width_u, frames);
-		amp[x] = (idx < frames) ? s->wave[idx] : 0.0f;
+		amp[x] = sample_at_x(s, d, x, width_u);
 	}
 
 	std::vector<float> amp_smooth(width_u);
@@ -309,7 +382,14 @@ static void draw_line_filled(audio_wave_source *s, gs_eparam_t *color_param)
 		if (v > 1.0f)
 			v = 1.0f;
 
-		const float y_current = top_margin + (1.0f - v) * (h - top_margin);
+		float y_current;
+		if (d->side_mirror) {
+			// Centered fill: waveform lives above mid_y
+			y_current = mid_y - v * (mid_y - top_margin);
+		} else {
+			// Bottom fill
+			y_current = top_margin + (1.0f - v) * (h - top_margin);
+		}
 
 		float y_prev = d->initialized ? d->prev_y[x] : y_current;
 		float y_smooth = y_prev + alpha_time * (y_current - y_prev);
@@ -320,42 +400,88 @@ static void draw_line_filled(audio_wave_source *s, gs_eparam_t *color_param)
 
 	d->initialized = true;
 
-	if (color_param)
-		audio_wave_set_solid_color(color_param, fill_color);
+	const float base = d->side_mirror ? baseline_center : baseline_bottom;
 
-	gs_render_start(true);
-	for (uint32_t x = 0; x + 1 < width_u; ++x) {
-		const float y1 = ys[x];
-		const float y2 = ys[x + 1];
+	if (color_param && s->gradient_enabled) {
+		const uint32_t bins = 64;
+		for (uint32_t b = 0; b < bins; ++b) {
+			const uint32_t x0 = (uint32_t)((uint64_t)b * (width_u - 1) / bins);
+			const uint32_t x1 = (uint32_t)((uint64_t)(b + 1) * (width_u - 1) / bins);
+			if (x1 <= x0)
+				continue;
 
-		gs_vertex2f((float)x, baseline);
-		gs_vertex2f((float)x, y1);
-		gs_vertex2f((float)(x + 1), baseline);
+			const float tcol = (bins <= 1) ? 0.0f : ((float)b / (float)(bins - 1));
+			audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, tcol));
 
-		gs_vertex2f((float)(x + 1), baseline);
-		gs_vertex2f((float)x, y1);
-		gs_vertex2f((float)(x + 1), y2);
+			gs_render_start(true);
+			for (uint32_t x = x0; x < x1; ++x) {
+				const float y1 = ys[x];
+				const float y2 = ys[x + 1];
 
-		if (s->mirror) {
-			float y1m = 2.0f * mid_y - y1;
-			float y2m = 2.0f * mid_y - y2;
+				gs_vertex2f((float)x, base);
+				gs_vertex2f((float)x, y1);
+				gs_vertex2f((float)(x + 1), base);
 
-			y1m = std::clamp(y1m, 0.0f, h);
-			y2m = std::clamp(y2m, 0.0f, h);
+				gs_vertex2f((float)(x + 1), base);
+				gs_vertex2f((float)x, y1);
+				gs_vertex2f((float)(x + 1), y2);
 
-			gs_vertex2f((float)x, 0.0f);
-			gs_vertex2f((float)x, y1m);
-			gs_vertex2f((float)(x + 1), 0.0f);
+				if (d->side_mirror) {
+					float y1m = 2.0f * mid_y - y1;
+					float y2m = 2.0f * mid_y - y2;
 
-			gs_vertex2f((float)(x + 1), 0.0f);
-			gs_vertex2f((float)x, y1m);
-			gs_vertex2f((float)(x + 1), y2m);
+					y1m = std::clamp(y1m, 0.0f, h);
+					y2m = std::clamp(y2m, 0.0f, h);
+
+					gs_vertex2f((float)x, baseline_center);
+					gs_vertex2f((float)x, y1m);
+					gs_vertex2f((float)(x + 1), baseline_center);
+
+					gs_vertex2f((float)(x + 1), baseline_center);
+					gs_vertex2f((float)x, y1m);
+					gs_vertex2f((float)(x + 1), y2m);
+				}
+			}
+			gs_render_stop(GS_TRIS);
 		}
-	}
-	gs_render_stop(GS_TRIS);
+	} else {
+		if (color_param)
+			audio_wave_set_solid_color(color_param, s->color);
 
-	if (color_param)
-		audio_wave_set_solid_color(color_param, outline_color);
+		gs_render_start(true);
+		for (uint32_t x = 0; x + 1 < width_u; ++x) {
+			const float y1 = ys[x];
+			const float y2 = ys[x + 1];
+
+			gs_vertex2f((float)x, baseline);
+			gs_vertex2f((float)x, y1);
+			gs_vertex2f((float)(x + 1), baseline);
+
+			gs_vertex2f((float)(x + 1), baseline);
+			gs_vertex2f((float)x, y1);
+			gs_vertex2f((float)(x + 1), y2);
+
+			if (d->side_mirror) {
+				float y1m = 2.0f * mid_y - y1;
+				float y2m = 2.0f * mid_y - y2;
+
+				y1m = std::clamp(y1m, 0.0f, h);
+				y2m = std::clamp(y2m, 0.0f, h);
+
+				gs_vertex2f((float)x, 0.0f);
+				gs_vertex2f((float)x, y1m);
+				gs_vertex2f((float)(x + 1), 0.0f);
+
+				gs_vertex2f((float)(x + 1), 0.0f);
+				gs_vertex2f((float)x, y1m);
+				gs_vertex2f((float)(x + 1), y2m);
+			}
+		}
+		gs_render_stop(GS_TRIS);
+	}
+
+	if (color_param && !s->gradient_enabled)
+		audio_wave_set_solid_color(color_param, s->color);
 
 	int thick = d->outline_thickness;
 	if (thick < 1)
@@ -374,7 +500,7 @@ static void draw_line_filled(audio_wave_source *s, gs_eparam_t *color_param)
 		}
 		gs_render_stop(GS_LINESTRIP);
 
-		if (s->mirror) {
+		if (d->side_mirror) {
 			gs_render_start(true);
 			for (uint32_t x = 0; x < width_u; ++x) {
 				float y_m = 2.0f * mid_y - ys[x] + offset;
@@ -400,8 +526,12 @@ static void line_theme_draw(audio_wave_source *s, gs_eparam_t *color_param)
 	gs_matrix_push();
 
 	if (frames < 2) {
-		if (color_param)
-			audio_wave_set_solid_color(color_param, s->color);
+		if (color_param) {
+			if (s->gradient_enabled)
+				audio_wave_set_solid_color(color_param, aw_gradient_color_at(s, 0.5f));
+			else
+				audio_wave_set_solid_color(color_param, s->color);
+		}
 
 		gs_render_start(true);
 		for (uint32_t x = 0; x < (uint32_t)w; ++x)

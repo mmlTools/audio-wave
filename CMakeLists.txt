@@ -87,22 +87,13 @@ set(OBS_AUDIO_WAVE_SRC
   ${AW_SRC_DIR}/plugin-main.cpp
   ${AW_SRC_DIR}/audio-wave.cpp
   ${AW_SRC_DIR}/audiowave-themes.cpp 
-  ${AW_THM_DIR}/theme-line.cpp
-  ${AW_THM_DIR}/theme-star.cpp
-  ${AW_THM_DIR}/theme-hex.cpp
-  ${AW_THM_DIR}/theme-abstract.cpp
-  ${AW_THM_DIR}/theme-doughnut.cpp
-  ${AW_THM_DIR}/theme-cosmic.cpp
-  ${AW_THM_DIR}/theme-square.cpp
   ${AW_THM_DIR}/theme-circle.cpp
-  ${AW_THM_DIR}/theme-fluid.cpp
-  ${AW_THM_DIR}/theme-fluidblob.cpp
-  ${AW_THM_DIR}/theme-musicmagic.cpp
-  ${AW_THM_DIR}/theme-magicsquare.cpp
-  ${AW_THM_DIR}/theme-cartoonframe.cpp
-  ${AW_THM_DIR}/theme-lightning.cpp
+  ${AW_THM_DIR}/theme-hex.cpp
+  ${AW_THM_DIR}/theme-line.cpp
   ${AW_THM_DIR}/theme-rounded-bars.cpp
-  ${AW_THM_DIR}/theme-pulse.cpp
+  ${AW_THM_DIR}/theme-square.cpp
+  ${AW_THM_DIR}/theme-stacked-columns.cpp
+  ${AW_THM_DIR}/theme-star.cpp
 )
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${OBS_AUDIO_WAVE_SRC})
