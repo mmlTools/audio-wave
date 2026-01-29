@@ -33,13 +33,13 @@
   },
   "platformConfig": {
     "macos": {
-      "bundleId": "com.example.audio-wave"
+      "bundleId": "com.streamrsc.audio-wave"
     }
   },
   "name": "audio-wave",
-  "displayName": "Create audio waves out of any audio source",
-  "version": "2.0.0",
+  "displayName": "Audio Waves",
+  "version": "2.1.0",
   "author": "MMLTech",
-  "website": "https://ko-fi.com/mmltech",
-  "email": "contact@obscountdown.com"
+  "website": "https://streamrsc.com",
+  "email": "contact@streamrsc.com"
 }
