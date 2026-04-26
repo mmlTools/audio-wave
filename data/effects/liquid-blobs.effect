@@ -1,0 +1,127 @@
+uniform float4x4 ViewProj;
+uniform float2   source_size;
+uniform float2   resolution;
+uniform float    time;
+uniform float    audio_level;
+uniform float    audio_peak;
+uniform float    audio_bass;
+uniform float    audio_mid;
+uniform float    audio_treble;
+uniform float    band_count;
+uniform float    audio_bands[64];
+uniform float    option1;
+uniform float    option2;
+uniform float    option3;
+uniform float    option4;
+uniform float    option5;
+uniform float    option6;
+uniform float    option7;
+uniform float    option8;
+uniform float4   color1 = {0.00, 0.80, 1.00, 1.00};
+uniform float4   color2 = {0.80, 0.10, 1.00, 1.00};
+uniform float4   color3 = {1.00, 0.40, 0.10, 1.00};
+uniform float4   color4 = {0.10, 1.00, 0.50, 1.00};
+
+struct VertIn  { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+struct VertOut { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+
+VertOut VSDefault(VertIn v_in)
+{
+    VertOut o;
+    o.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    o.uv  = v_in.uv;
+    return o;
+}
+
+float safe_aspect() { return source_size.x / max(1.0, source_size.y); }
+float hash11(float n) { return frac(sin(n) * 43758.5453); }
+
+float band_smooth(float x)
+{
+    x = saturate(x) * max(1.0, band_count - 1.0);
+    int i0 = clamp((int)floor(x), 0, 63);
+    int i1 = clamp(i0 + 1, 0, 63);
+    return lerp(saturate(audio_bands[i0]), saturate(audio_bands[i1]), frac(x));
+}
+
+float3 safe_color3(float4 c, float3 fallback)
+{
+    return (dot(abs(c.rgb), float3(1,1,1)) < 0.0001) ? fallback : saturate(c.rgb);
+}
+
+// Per-blob random band energy: each blob reacts to a different random frequency,
+// not the band at its current position. Plugin attack/release is baked into audio_bands[].
+float blob_energy(float blobId)
+{
+    float gate  = smoothstep(0.008, 0.065, audio_level);
+    float rate  = 0.8 + hash11(blobId * 43.7 + 5.0) * 2.5;
+    float phase = time * rate + blobId * 31.71;
+    float tick  = floor(phase);
+    float age   = frac(phase);
+
+    float rBand0 = hash11(tick * 67.13 + blobId * 23.91);
+    float rBand1 = hash11((tick + 1.0) * 67.13 + blobId * 23.91);
+    float t      = smoothstep(0.75, 1.0, age);
+    float amp    = lerp(band_smooth(rBand0), band_smooth(rBand1), t);
+    float gain   = lerp(0.70, 1.35, hash11(tick * 29.3 + blobId * 7.1));
+    return saturate(amp * gain * gate * (0.55 + audio_peak * 0.70));
+}
+
+float4 PSDefault(VertOut v_in) : TARGET
+{
+    float2 p = v_in.uv * 2.0 - 1.0;
+    p.x *= safe_aspect();
+
+    float blobSize  = lerp(0.030, 0.110, option1);
+    float glowStr   = lerp(0.30,  1.00,  option2);
+    float blobCount = floor(lerp(4.0, 10.0, option3) + 0.5);
+    float driftSpd  = lerp(0.10,  0.55,  option4);
+
+    float field = 0.0;
+    float3 col  = (float3)0.0;
+    float  wsum = 0.0;
+
+    for (int i = 0; i < 10; ++i)
+    {
+        float fi = (float)i;
+        if (fi >= blobCount) break;
+
+        // Organic drifting orbit, each blob has unique rates
+        float rx = 0.21 + fi * 0.031;
+        float ry = 0.18 + fi * 0.041;
+        float2 c = float2(
+            sin(time * (rx * driftSpd) + fi * 1.70) * (0.18 + 0.42 * frac(fi * 0.37)),
+            cos(time * (ry * driftSpd) + fi * 2.10) * (0.15 + 0.38 * frac(fi * 0.53)));
+
+        // Per-blob energy → size modulation. Attack/release from plugin.
+        float energy  = blob_energy(fi);
+        float sz      = blobSize + energy * 0.08 + audio_level * 0.02;
+        float contrib = sz / max(0.01, length(p - c));
+
+        field += contrib;
+
+        // Per-blob color cycling through all 4 colors
+        float ct = frac(fi / blobCount + time * 0.07);
+        float3 c1 = safe_color3(color1, float3(0.00, 0.80, 1.00));
+        float3 c2 = safe_color3(color2, float3(0.80, 0.10, 1.00));
+        float3 c3 = safe_color3(color3, float3(1.00, 0.40, 0.10));
+        float3 c4 = safe_color3(color4, float3(0.10, 1.00, 0.50));
+        float3 blobCol = ct < 0.25 ? lerp(c1, c2, ct * 4.0) :
+                         ct < 0.50 ? lerp(c2, c3, (ct - 0.25) * 4.0) :
+                         ct < 0.75 ? lerp(c3, c4, (ct - 0.50) * 4.0) :
+                                     lerp(c4, c1, (ct - 0.75) * 4.0);
+
+        col  += blobCol * contrib;
+        wsum += contrib;
+    }
+
+    float edge  = smoothstep(0.75, 1.10 + audio_level * 0.32, field);
+    float glow  = smoothstep(0.45, 1.0, field) * glowStr;
+
+    col = (wsum > 0.001) ? col / wsum : safe_color3(color1, float3(0.00, 0.80, 1.00));
+    col = lerp(col, safe_color3(color3, float3(1.00, 0.40, 0.10)), audio_peak * 0.35);
+
+    return float4(col, saturate(edge + glow * 0.38));
+}
+
+technique Draw { pass { vertex_shader = VSDefault(v_in); pixel_shader = PSDefault(v_in); } }

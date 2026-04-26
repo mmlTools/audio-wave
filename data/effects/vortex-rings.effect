@@ -1,0 +1,137 @@
+uniform float4x4 ViewProj;
+uniform float2   source_size;
+uniform float2   resolution;
+uniform float    time;
+uniform float    audio_level;
+uniform float    audio_peak;
+uniform float    audio_bass;
+uniform float    audio_mid;
+uniform float    audio_treble;
+uniform float    band_count;
+uniform float    audio_bands[64];
+uniform float    option1;
+uniform float    option2;
+uniform float    option3;
+uniform float    option4;
+uniform float    option5;
+uniform float    option6;
+uniform float    option7;
+uniform float    option8;
+uniform float4   color1 = {0.00, 0.70, 1.00, 1.00};
+uniform float4   color2 = {1.00, 0.10, 0.70, 1.00};
+uniform float4   color3 = {1.00, 0.70, 0.05, 1.00};
+
+struct VertIn  { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+struct VertOut { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+
+VertOut VSDefault(VertIn v_in)
+{
+    VertOut o;
+    o.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    o.uv  = v_in.uv;
+    return o;
+}
+
+float safe_aspect() { return source_size.x / max(1.0, source_size.y); }
+float hash11(float n) { return frac(sin(n) * 43758.5453); }
+
+float band_smooth(float x)
+{
+    x = saturate(x) * max(1.0, band_count - 1.0);
+    int i0 = clamp((int)floor(x), 0, 63);
+    int i1 = clamp(i0 + 1, 0, 63);
+    return lerp(saturate(audio_bands[i0]), saturate(audio_bands[i1]), frac(x));
+}
+
+float3 safe_color3(float4 c, float3 fallback)
+{
+    return (dot(abs(c.rgb), float3(1,1,1)) < 0.0001) ? fallback : saturate(c.rgb);
+}
+
+// Seamless 3-color vortex gradient cycling through Primary → Secondary → Accent
+float3 vortex_grad(float t)
+{
+    t = frac(t) * 3.0;
+    float3 ca = safe_color3(color1, float3(0.00, 0.70, 1.00));
+    float3 cb = safe_color3(color2, float3(1.00, 0.10, 0.70));
+    float3 cc = safe_color3(color3, float3(1.00, 0.70, 0.05));
+    float3 col = lerp(ca, cb, saturate(t));
+    col = lerp(col, lerp(cb, cc, saturate(t - 1.0)), step(1.0, t));
+    col = lerp(col, lerp(cc, ca, saturate(t - 2.0)), step(2.0, t));
+    return col;
+}
+
+// Each twisted segment picks a random audio band independently.
+// NO if() inside loops — wrapping done with step() to avoid GLSL driver issues.
+// 'id' is in [0..1], circular (frac-based).
+float segment_energy(float id)
+{
+    float gate  = smoothstep(0.005, 0.055, audio_level);
+    float total = 0.0;
+
+    for (int i = 0; i < 8; ++i)
+    {
+        float fi   = (float)i;
+        float rate = 0.4 + fi * 0.21 + hash11(fi * 17.3) * 0.6;
+        float phase = time * rate + fi * 83.71;
+        float tick  = floor(phase);
+        float age   = frac(phase);
+
+        // Random target segment — completely independent of position in spectrum
+        float target = hash11(tick * 61.13 + fi * 17.91);
+
+        // Circular wrap: min(|id-target|, 1-|id-target|) — done with step, no if()
+        float d    = abs(id - target);
+        float dWrap = 1.0 - d;
+        d = lerp(d, dWrap, step(dWrap, d));  // picks the shorter arc distance
+
+        float spread = lerp(0.04, 0.18, hash11(tick * 19.77 + fi * 37.3));
+        float blob   = exp(-(d * d) / max(spread * spread, 0.00001));
+
+        // Random band sample — decoupled from segment position
+        float rBand    = hash11(tick * 47.17 + fi * 31.83);
+        float bandAmp  = band_smooth(rBand);
+        float audioEnv = saturate(bandAmp * 0.65 + audio_peak * 0.35) * gate;
+
+        float env  = smoothstep(0.0, 0.06, age) * (1.0 - smoothstep(0.40, 1.0, age));
+        float gain = lerp(0.70, 1.35, hash11(tick * 23.37 + fi * 9.13));
+
+        total += blob * env * audioEnv * gain;
+    }
+    return saturate(total);
+}
+
+float4 PSDefault(VertOut v_in) : TARGET
+{
+    float2 p = v_in.uv * 2.0 - 1.0;
+    p.x *= safe_aspect();
+
+    float r = length(p);
+    float a = atan2(p.y, p.x);
+
+    // Twist: option1 = twist amount, option2 = spin speed
+    float twistAmt = 3.0 + option1 * 8.0;
+    float spinSpd  = 0.25 + option2 * 1.6;
+    float twist    = a + r * twistAmt - time * spinSpd;
+    float tNorm    = frac(twist / 6.2831853);
+
+    // Per-segment independent energy
+    float bElem = segment_energy(tNorm);
+
+    // Ring density: option3 controls how many rings
+    float density   = 4.0 + option3 * 14.0;
+    float ringPhase = frac(r * density - time * 1.5 + bElem * 2.0);
+    float ringVal   = 1.0 - smoothstep(0.0, 0.35, abs(ringPhase - 0.5) * 2.0);
+
+    float mask = 1.0 - smoothstep(0.05, 1.10, r);
+
+    // Color cycles around the vortex + drift over time
+    float3 col = vortex_grad(tNorm + time * 0.05);
+    col = col * (1.0 + bElem * 1.1);
+
+    // Strong base alpha so effect is visible even at silence
+    float alpha = ringVal * mask * (0.65 + bElem * 0.70 + audio_level * 0.45);
+    return float4(col, saturate(alpha));
+}
+
+technique Draw { pass { vertex_shader = VSDefault(v_in); pixel_shader = PSDefault(v_in); } }

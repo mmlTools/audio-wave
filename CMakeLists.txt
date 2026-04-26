@@ -5,7 +5,7 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake" NO_POLICY_SCO
 project(${_name} VERSION ${_version} LANGUAGES C CXX)
 
 # ---------------------------------------------------------------------------
-# Options (simple)
+# Options
 # ---------------------------------------------------------------------------
 option(ENABLE_FRONTEND_API "Use obs-frontend-api for UI functionality" OFF)
 option(ENABLE_QT "Use Qt functionality" OFF)
@@ -13,6 +13,8 @@ option(ENABLE_QT "Use Qt functionality" OFF)
 include(compilerconfig)
 include(defaults)
 include(helpers)
+
+include(GNUInstallDirs)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -34,7 +36,7 @@ endif()
 # ---------------------------------------------------------------------------
 set(AW_INC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/includes")
 set(AW_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
-set(AW_THM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/themes")
+set(AW_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data")
 set(AW_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # ---------------------------------------------------------------------------
@@ -53,6 +55,7 @@ endif()
 
 if(ENABLE_QT)
   find_package(Qt6 COMPONENTS Core Widgets QUIET)
+
   if(Qt6_FOUND)
     target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets)
   else()
@@ -65,38 +68,36 @@ if(ENABLE_QT)
     AUTOUIC ON
     AUTORCC ON
   )
+
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ENABLE_QT=1)
 endif()
 
+# ---------------------------------------------------------------------------
+# Generated config
+# ---------------------------------------------------------------------------
 file(MAKE_DIRECTORY "${AW_GEN_DIR}")
 
 configure_file(
-  ${AW_INC_DIR}/config.hpp.in
-  ${AW_GEN_DIR}/config.hpp
+  "${AW_INC_DIR}/config.hpp.in"
+  "${AW_GEN_DIR}/config.hpp"
   @ONLY
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-  ${AW_INC_DIR}
-  ${AW_SRC_DIR}
-  ${AW_THM_DIR}
-  ${AW_GEN_DIR}
+  "${AW_INC_DIR}"
+  "${AW_SRC_DIR}"
+  "${AW_GEN_DIR}"
 )
 
-set(OBS_AUDIO_WAVE_SRC
-  ${AW_SRC_DIR}/plugin-main.cpp
-  ${AW_SRC_DIR}/audio-wave.cpp
-  ${AW_SRC_DIR}/audiowave-themes.cpp 
-  ${AW_THM_DIR}/theme-line.cpp
-  ${AW_THM_DIR}/theme-star.cpp
-  ${AW_THM_DIR}/theme-square.cpp
-  ${AW_THM_DIR}/theme-circle.cpp
-  ${AW_THM_DIR}/theme-hex.cpp
-  ${AW_THM_DIR}/theme-stacked-columns.cpp
-  ${AW_THM_DIR}/theme-rounded-bars.cpp
+# ---------------------------------------------------------------------------
+# Sources
+# ---------------------------------------------------------------------------
+set(OBS_AUDIO_SHADER_SRC
+  "${AW_SRC_DIR}/plugin-main.cpp"
+  "${AW_SRC_DIR}/audio-shader-source.cpp"
 )
 
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${OBS_AUDIO_WAVE_SRC})
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${OBS_AUDIO_SHADER_SRC})
 
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
   PLUGIN_NAME_STR="${_name}"
@@ -111,3 +112,13 @@ set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES
   OUTPUT_NAME ${_name}
 )
+
+# ---------------------------------------------------------------------------
+# Install data folder: effects + locale
+# ---------------------------------------------------------------------------
+if(EXISTS "${AW_DATA_DIR}")
+  install(
+    DIRECTORY "${AW_DATA_DIR}/"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/obs/obs-plugins/${_name}"
+  )
+endif()

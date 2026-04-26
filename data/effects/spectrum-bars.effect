@@ -1,0 +1,122 @@
+uniform float4x4 ViewProj;
+uniform float2   source_size;
+uniform float2   resolution;
+uniform float    time;
+uniform float    audio_level;
+uniform float    audio_peak;
+uniform float    audio_bass;
+uniform float    audio_mid;
+uniform float    audio_treble;
+uniform float    band_count;
+uniform float    audio_bands[64];
+uniform float    option1;
+uniform float    option2;
+uniform float    option3;
+uniform float    option4;
+uniform float    option5;
+uniform float    option6;
+uniform float    option7;
+uniform float    option8;
+uniform float4   color1 = {0.00, 0.75, 1.00, 1.00};
+uniform float4   color2 = {0.35, 0.20, 1.00, 1.00};
+uniform float4   color3 = {1.00, 0.10, 0.80, 1.00};
+uniform float4   color4 = {1.00, 0.90, 0.20, 1.00};
+
+struct VertIn  { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+struct VertOut { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+
+VertOut VSDefault(VertIn v_in)
+{
+    VertOut o;
+    o.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    o.uv  = v_in.uv;
+    return o;
+}
+
+float hash11(float n) { return frac(sin(n * 127.113 + 13.17) * 43758.5453123); }
+
+float band_smooth(float x)
+{
+    x = saturate(x) * max(1.0, band_count - 1.0);
+    int i0 = clamp((int)floor(x), 0, 63);
+    int i1 = clamp(i0 + 1, 0, 63);
+    return lerp(saturate(audio_bands[i0]), saturate(audio_bands[i1]), frac(x));
+}
+
+float3 safe_color(float4 c, float3 fallback)
+{
+    float hasColor = step(0.002, abs(c.r) + abs(c.g) + abs(c.b));
+    return lerp(fallback, saturate(c.rgb), hasColor);
+}
+
+float3 gradient4(float t)
+{
+    t = saturate(t);
+    float3 a = safe_color(color1, float3(0.00, 0.75, 1.00));
+    float3 b = safe_color(color2, float3(0.35, 0.20, 1.00));
+    float3 c = safe_color(color3, float3(1.00, 0.10, 0.80));
+    float3 d = safe_color(color4, float3(1.00, 0.90, 0.20));
+    float3 ab = lerp(a, b, smoothstep(0.00, 0.33, t));
+    float3 bc = lerp(b, c, smoothstep(0.33, 0.66, t));
+    float3 cd = lerp(c, d, smoothstep(0.66, 1.00, t));
+    return lerp(lerp(ab, bc, step(0.33, t)), cd, step(0.66, t));
+}
+
+// Each bar picks a random audio band at its own independent rate.
+// audio_bands[] already carries plugin attack_ms / release_ms smoothing,
+// so "jump up on hit, retract on silence" is inherent — no bar syncs with another.
+float bar_energy(float barId, float speed)
+{
+    float gate  = smoothstep(0.008, 0.065, audio_level);
+    float rate  = lerp(1.5, 14.0, speed) * (0.7 + hash11(barId * 43.7 + 1.0) * 0.6);
+    float phase = time * rate + barId * 31.71;
+    float tick  = floor(phase);
+    float age   = frac(phase);
+
+    float rBand0 = hash11(tick * 67.13 + barId * 23.91);
+    float rBand1 = hash11((tick + 1.0) * 67.13 + barId * 23.91);
+
+    float t       = smoothstep(0.75, 1.0, age);
+    float bandAmp = lerp(band_smooth(rBand0), band_smooth(rBand1), t);
+
+    float gain = lerp(0.70, 1.35, hash11(tick * 29.3 + barId * 7.1));
+    return saturate(bandAmp * gain * gate * (0.50 + audio_peak * 0.75));
+}
+
+float4 PSDefault(VertOut v_in) : TARGET
+{
+    float2 uv = saturate(v_in.uv);
+
+    float bars       = floor(lerp(16.0, 128.0, saturate(option1)) + 0.5);
+    float reactivity = lerp(1.25, 6.00,  saturate(option2));
+    float gap        = lerp(0.04, 0.42,  saturate(option3));
+    float baseline   = lerp(0.965, 0.085, saturate(option4));
+    float speed      = saturate(option5);
+
+    float barCoord = uv.x * bars;
+    float barId    = floor(barCoord);
+    float localX   = frac(barCoord);
+
+    float insideX = step(gap * 0.5, localX) * step(localX, 1.0 - gap * 0.5);
+    float energy  = saturate(bar_energy(barId, speed) * reactivity);
+
+    float availH = max(0.02, baseline - 0.015);
+    float topY   = baseline - energy * availH;
+
+    float body = step(uv.y, baseline) * step(topY, uv.y);
+    float cap  = (1.0 - smoothstep(0.000, 0.030, abs(uv.y - topY))) * saturate(energy * 1.5);
+
+    float alpha = insideX * saturate(body * (0.35 + energy * 0.65) + cap * 0.45);
+    float barT  = (barId + 0.5) / bars;
+    float3 col  = gradient4(frac(barT + energy * 0.12));
+    return float4(col, alpha);
+}
+
+technique Draw
+{
+    pass
+    {
+        vertex_shader = VSDefault(v_in);
+        pixel_shader  = PSDefault(v_in);
+    }
+}

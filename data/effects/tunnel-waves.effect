@@ -1,0 +1,136 @@
+uniform float4x4 ViewProj;
+uniform float2   source_size;
+uniform float2   resolution;
+uniform float    time;
+uniform float    audio_level;
+uniform float    audio_peak;
+uniform float    audio_bass;
+uniform float    audio_mid;
+uniform float    audio_treble;
+uniform float    band_count;
+uniform float    audio_bands[64];
+uniform float    option1;
+uniform float    option2;
+uniform float    option3;
+uniform float    option4;
+uniform float    option5;
+uniform float    option6;
+uniform float    option7;
+uniform float    option8;
+uniform float4   color1 = {0.00, 0.90, 1.00, 1.00};
+uniform float4   color2 = {0.60, 0.10, 1.00, 1.00};
+uniform float4   color3 = {1.00, 0.45, 0.10, 1.00};
+
+struct VertIn  { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+struct VertOut { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+
+VertOut VSDefault(VertIn v_in)
+{
+    VertOut o;
+    o.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    o.uv  = v_in.uv;
+    return o;
+}
+
+float safe_aspect() { return source_size.x / max(1.0, source_size.y); }
+float hash11(float n) { return frac(sin(n) * 43758.5453); }
+
+float band_smooth(float x)
+{
+    x = saturate(x) * max(1.0, band_count - 1.0);
+    int i0 = clamp((int)floor(x), 0, 63);
+    int i1 = clamp(i0 + 1, 0, 63);
+    return lerp(saturate(audio_bands[i0]), saturate(audio_bands[i1]), frac(x));
+}
+
+float3 safe_color3(float4 c, float3 fallback)
+{
+    return (dot(abs(c.rgb), float3(1,1,1)) < 0.0001) ? fallback : saturate(c.rgb);
+}
+
+// Gradient: center (color1) → mid (color2) → edge (color3)
+float3 depth_grad(float t)
+{
+    t = saturate(t);
+    float3 ca = safe_color3(color1, float3(0.00, 0.90, 1.00));
+    float3 cb = safe_color3(color2, float3(0.60, 0.10, 1.00));
+    float3 cc = safe_color3(color3, float3(1.00, 0.45, 0.10));
+    float3 ab = lerp(ca, cb, smoothstep(0.0, 0.5, t));
+    float3 bc = lerp(cb, cc, smoothstep(0.5, 1.0, t));
+    return lerp(ab, bc, step(0.5, t));
+}
+
+// Each ring at radius 'r' picks a random band independently.
+// NO if() inside loops — uses step() multiply instead to avoid GLSL driver issues.
+// audio_bands[] already carries plugin attack_ms/release_ms smoothing.
+float ring_energy(float r)
+{
+    float gate  = smoothstep(0.005, 0.055, audio_level);
+    float total = 0.0;
+
+    for (int i = 0; i < 8; ++i)
+    {
+        float fi   = (float)i;
+        float rate = 0.4 + fi * 0.21 + hash11(fi * 17.3) * 0.6;
+        float phase = time * rate + fi * 83.71;
+        float tick  = floor(phase);
+        float age   = frac(phase);
+
+        // Random target radius — each event hits a different ring
+        float target = hash11(tick * 61.13 + fi * 17.91);
+        float d      = abs(r - target);
+
+        float spread = lerp(0.06, 0.22, hash11(tick * 19.77 + fi * 37.3));
+        float blob   = exp(-(d * d) / max(spread * spread, 0.00001));
+
+        // Random band — decoupled from position. Plugin attack/release in audio_bands[].
+        float rBand    = hash11(tick * 47.17 + fi * 31.83);
+        float bandAmp  = band_smooth(rBand);
+        float audioEnv = saturate(bandAmp * 0.65 + audio_peak * 0.35) * gate;
+
+        // Short attack, longer tail
+        float env  = smoothstep(0.0, 0.06, age) * (1.0 - smoothstep(0.40, 1.0, age));
+        float gain = lerp(0.70, 1.35, hash11(tick * 23.37 + fi * 9.13));
+
+        total += blob * env * audioEnv * gain;
+    }
+    return saturate(total);
+}
+
+float4 PSDefault(VertOut v_in) : TARGET
+{
+    float2 p = v_in.uv * 2.0 - 1.0;
+    p.x *= safe_aspect();
+
+    float r   = length(p);
+    float a   = atan2(p.y, p.x);
+
+    // Per-ring independent energy — no shared frequency axis
+    float rNorm = saturate(r * 0.80);
+    float bElem = ring_energy(rNorm);
+
+    // Ring density (option1) and speed (option2)
+    float density = 4.0 + option1 * 14.0;
+    float speed   = 0.4 + option2 * 2.8;
+
+    // frac()-based rings: always full width, no thinning with radius
+    float ringPhase = frac(r * density - time * speed + bElem * 2.5);
+    // Bright core at phase=0.5, dark gaps at 0 and 1
+    float ringVal   = 1.0 - smoothstep(0.0, 0.35, abs(ringPhase - 0.5) * 2.0);
+
+    // Radial fade: bright center, fades at edges
+    float fade = 1.0 - smoothstep(0.10, 1.10, r);
+
+    // Angular shimmer — rotates slowly, each wedge reacts to bElem
+    float angGlow = 0.5 + 0.5 * sin(a * 6.0 + time * 0.8 + bElem * 3.0);
+
+    // Color: depth gradient from center to edge, boosted by audio
+    float3 col = depth_grad(saturate(r * 0.85));
+    col = col * (1.0 + bElem * 1.2) * (0.85 + angGlow * 0.15);
+
+    // Strong base alpha + audio boost
+    float alpha = ringVal * fade * (0.65 + bElem * 0.70 + audio_level * 0.45);
+    return float4(col, saturate(alpha));
+}
+
+technique Draw { pass { vertex_shader = VSDefault(v_in); pixel_shader = PSDefault(v_in); } }

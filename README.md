@@ -1,82 +1,179 @@
-# Audio Wave - Audio Visualizer for OBS Studio
+# Audio Waves Visualizer for OBS Studio
 
-**Audio Wave** is a lightweight, real-time audio visualizer source for OBS Studio.  
-It listens to any audio source in your scene and draws a clean waveform or shape that reacts to the sound.
+Audio Waves Visualizer is a minimal OBS source plugin for building audio-reactive visuals with OBS `.effect` / HLSL shaders.
 
-Perfect for:
+The plugin itself does not hardcode visual themes. It creates a transparent video source, reads level and spectrum data from a selected OBS audio source, then passes that data into the selected shader as uniforms.
 
-- Music and chill streams  
-- “Just Chatting” overlays  
-- Podcasts and talk shows  
-- “Now Playing” or idle scenes  
+## Core idea
 
-![Audio Wave Preview](docs/assets/img/preview.png)
+```text
+OBS audio source
+    ↓
+RMS / peak / FFT band analysis
+    ↓
+shader uniforms
+    ↓
+transparent OBS visual source
+```
 
----
+You can use the bundled effects or load your own `.effect` file directly from the source properties window.
 
-## ✨ Key Features
+## Features
 
-- Attach to **any audio source** in your scene (mic, desktop, music, game, etc.)
-- Multiple **shapes** (line, circle, rectangle, hexagon, star, triangle, diamond)
-- Multiple **styles** (line wave, bars, smooth line, filled wave)
-- Custom **color**, **size**, **amplitude**, and **curve power**
-- Optional **mirror mode** and **shape density** control
+- Transparent OBS source for audio-reactive VFX.
+- Select any active OBS audio source.
+- Load custom `.effect` files from any folder.
+- Optional `.effect.ini` metadata file for friendly control names.
+- Live shader controls exposed in the OBS properties window.
+- Audio uniforms for level, peak, bass, mid, treble, and 64 spectrum bands.
+- Bundled VFX effects, including rings, waves, bars, neon lines, vortex effects, and rounded wobble bars.
 
-For a full explanation of every setting and theme, visit the detailed guide:  
-👉 **https://mmltools.github.io/audio-wave/**
+## Bundled effects
 
----
+The plugin includes:
 
-## 🧩 Installation (Manual)
+1. Pulse Ring
+2. Neon Lines
+3. Equalizer Grid
+4. Smooth Waveform Ribbon
+5. Rounded Wobble Bars
+6. Spectrum Bars
+7. Radial Spikes
+8. Tunnel Waves
+9. Liquid Blobs
+10. Starfield Burst
+11. Vortex Rings
 
-1. Download the latest release from GitHub:  
-   👉 https://github.com/mmlTools/audio-wave/releases
+Effects are installed under:
 
-2. Extract the archive and place the plugin file(s) as follows:
+```text
+data/obs-plugins/audio-wave/effects/
+```
 
-   **Windows (Standard OBS):**  
-   - Put the `.dll` file into:  
-     `C:\Program Files\obs-studio\obs-plugins\64bit`
+## Custom effects
 
-   **Windows (Portable OBS):**  
-   - Put the `.dll` file into:  
-     `obs-studio-portable\obs-plugins\64bit`
+A custom shader can be loaded from the source properties:
 
-   **macOS:**  
-   - Right-click `OBS.app` → **Show Package Contents**  
-   - Copy the plugin into:  
-     `OBS.app/Contents/PlugIns`
+```text
+Properties → HLSL / OBS .effect file → Browse
+```
 
-   **Linux / Flatpak:**  
-   - Use your system’s OBS plugin paths, e.g.:  
-     `/usr/lib/obs-plugins` or  
-     `~/.var/app/com.obsproject.Studio/config/obs-studio/plugins/`
+The shader should define a `Draw` technique. The plugin also checks `Solid` and `Default` as fallbacks.
 
-3. Restart OBS Studio.
+## Available shader uniforms
 
-After restart, you should see a new source type: **“Audio Wave”**.
+```hlsl
+uniform float4x4 ViewProj;
+uniform float2 source_size;
+uniform float2 resolution;
+uniform float time;
 
----
+uniform float audio_level;
+uniform float audio_peak;
+uniform float audio_bass;
+uniform float audio_mid;
+uniform float audio_treble;
+uniform float band_count;
+uniform float audio_bands[64];
 
-## 🚀 Quick Start
+uniform float option1;
+uniform float option2;
+uniform float option3;
+uniform float option4;
+uniform float option5;
+uniform float option6;
+uniform float option7;
+uniform float option8;
 
-1. In OBS, click **`+`** under **Sources**.  
-2. Select **Audio Wave**.  
-3. Pick an **Audio Source** (e.g. Desktop Audio, Mic/Aux, Music).  
-4. Adjust shape, style, color, amplitude, and curve to match your overlay.  
-5. Resize and position it in your scene like any other source.
+uniform float4 color1;
+uniform float4 color2;
+uniform float4 color3;
+uniform float4 color4;
+```
 
-For screenshots, examples, and detailed usage tips:  
-👉 **https://mmltools.github.io/audio-wave/**
+## Metadata file
 
----
+To expose clean control names in OBS, place an `.effect.ini` file beside your shader.
 
-## ❤️ Support the Project
+Example:
 
-If you like this plugin and want to support future OBS tools:
+```text
+my-effect.effect
+my-effect.effect.ini
+```
 
-- **Ko-Fi Shop:** https://ko-fi.com/mmltech/shop  
-- **Ko-fi:** https://ko-fi.com/mmltech  
-- **PayPal:** https://paypal.me/mmlTools  
+Example metadata:
 
-Thank you for your support!
+```ini
+[effect]
+name=My Audio Effect
+
+[options]
+option1=Line Thickness
+option2=Glow Strength
+option3=Animation Speed
+
+[colors]
+color1=Primary Color
+color2=Secondary Color
+color3=Glow Color
+```
+
+Only named options/colors are shown in the properties window. Unnamed shader uniforms remain hidden.
+
+## Minimal shader example
+
+```hlsl
+uniform float4x4 ViewProj;
+uniform float2 source_size;
+uniform float time;
+uniform float audio_level;
+uniform float4 color1;
+
+struct VertIn {
+    float4 pos : POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+struct VertOut {
+    float4 pos : POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+VertOut VSDefault(VertIn v_in)
+{
+    VertOut o;
+    o.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    o.uv = v_in.uv;
+    return o;
+}
+
+float4 PSDefault(VertOut v) : TARGET
+{
+    float2 p = v.uv * 2.0 - 1.0;
+    p.x *= source_size.x / max(1.0, source_size.y);
+
+    float radius = 0.25 + audio_level * 0.35;
+    float d = abs(length(p) - radius);
+    float ring = 1.0 - smoothstep(0.02, 0.05, d);
+
+    return float4(color1.rgb, ring);
+}
+
+technique Draw
+{
+    pass
+    {
+        vertex_shader = VSDefault(v_in);
+        pixel_shader  = PSDefault(v_in);
+    }
+}
+```
+
+## Source sizing
+
+The source renders inside its own transparent source rectangle. Resize the source item in OBS normally, or set the manual canvas width/height in source properties for a different internal shader resolution.
+
+## Building
+
+This project uses the OBS plugin template structure and CMake. The `data` folder is installed into the OBS plugin data directory so bundled effects and locale files are packaged with GitHub Actions artifacts.

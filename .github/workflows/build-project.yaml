@@ -1,10 +1,12 @@
 name: Build Project
+
 on:
   workflow_call:
     outputs:
       pluginName:
         description: Project name detected by parsing build spec file
         value: ${{ jobs.check-event.outputs.pluginName }}
+
 jobs:
   check-event:
     name: Check GitHub Event Data 🔎
@@ -23,12 +25,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Check Event Data ☑️
         id: setup
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          : Check Event Data ☑️
           if [[ "${RUNNER_DEBUG}" ]]; then set -x; fi
 
           case "${GITHUB_EVENT_NAME}" in
@@ -53,22 +55,25 @@ jobs:
             schedule)
               config_data=('codesign:true' 'notarize:false' 'package:true' 'config:RelWithDebInfo')
               ;;
-            *) ;;
+            *)
+              config_data=('codesign:false' 'notarize:false' 'package:false' 'config:RelWithDebInfo')
+              ;;
           esac
 
           for config in "${config_data[@]}"; do
             IFS=':' read -r key value <<< "${config}"
-            echo "${key}=${value}" >> $GITHUB_OUTPUT
+            echo "${key}=${value}" >> "$GITHUB_OUTPUT"
           done
-          echo "commitHash=${GITHUB_SHA:0:9}" >> $GITHUB_OUTPUT
 
-          plugin_name="$(grep 'name' buildspec.json | sed -E -e 's/^.+"name":[^"]+"(.+)",?$/\1/g')"
-          plugin_display_name="$(grep 'displayName' buildspec.json | sed -E -e 's/^.+"displayName":[^"]+"(.+)",?$/\1/g' || echo "")"
+          echo "commitHash=${GITHUB_SHA:0:9}" >> "$GITHUB_OUTPUT"
 
-          if [[ "${plugin_display_name}" ]]; then
-            echo "pluginName=${plugin_display_name}" >> $GITHUB_OUTPUT
+          plugin_name="$(jq -r '.name' buildspec.json)"
+          plugin_display_name="$(jq -r '.displayName // empty' buildspec.json)"
+
+          if [[ -n "${plugin_display_name}" ]]; then
+            echo "pluginName=${plugin_display_name}" >> "$GITHUB_OUTPUT"
           else
-            echo "pluginName=${plugin_name}" >> $GITHUB_OUTPUT
+            echo "pluginName=${plugin_name}" >> "$GITHUB_OUTPUT"
           fi
 
   macos-build:
@@ -87,22 +92,9 @@ jobs:
       - name: Set Up Environment 🔧
         id: setup
         run: |
-          : Set Up Environment 🔧
           if (( ${+RUNNER_DEBUG} )) setopt XTRACE
 
-          print '::group::Enable Xcode 16.1'
           sudo xcode-select --switch /Applications/Xcode_16.1.0.app/Contents/Developer
-          print '::endgroup::'
-
-          print '::group::Clean Homebrew Environment'
-          local -a unwanted_formulas=()
-          local -a remove_formulas=()
-          for formula (${unwanted_formulas}) {
-            if [[ -d ${HOMEBREW_PREFIX}/Cellar/${formula} ]] remove_formulas+=(${formula})
-          }
-
-          if (( #remove_formulas )) brew uninstall --ignore-dependencies ${remove_formulas}
-          print '::endgroup::'
 
           local product_name
           local product_version
@@ -133,6 +125,12 @@ jobs:
           provisioningProfile: ${{ secrets.MACOS_SIGNING_PROVISIONING_PROFILE }}
           notarizationUser: ${{ secrets.MACOS_NOTARIZATION_USERNAME }}
           notarizationPassword: ${{ secrets.MACOS_NOTARIZATION_PASSWORD }}
+
+      - name: Validate Plugin Data Folder 📁
+        run: |
+          test -d "${{ github.workspace }}/data/effects"
+          test -d "${{ github.workspace }}/data/locale"
+          find "${{ github.workspace }}/data" -type f
 
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
@@ -177,10 +175,7 @@ jobs:
 
   ubuntu-build:
     name: Build for Ubuntu 🐧
-    strategy:
-      matrix:
-        os: [ubuntu-24.04]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     needs: check-event
     defaults:
       run:
@@ -194,22 +189,27 @@ jobs:
       - name: Set Up Environment 🔧
         id: setup
         run: |
-          : Set Up Environment 🔧
           if [[ "${RUNNER_DEBUG}" ]]; then set -x; fi
 
           read -r product_name product_version <<< \
             "$(jq -r '. | {name, version} | join(" ")' buildspec.json)"
 
-          echo "pluginName=${product_name}" >> $GITHUB_OUTPUT
-          echo "pluginVersion=${product_version}" >> $GITHUB_OUTPUT
+          echo "pluginName=${product_name}" >> "$GITHUB_OUTPUT"
+          echo "pluginVersion=${product_version}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/cache/restore@v4
         id: ccache-cache
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ${{ runner.os }}-${{ matrix.os }}-ccache-x86_64-${{ needs.check-event.outputs.config }}
+          key: ${{ runner.os }}-ubuntu-24.04-ccache-x86_64-${{ needs.check-event.outputs.config }}
           restore-keys: |
-            ${{ runner.os }}-${{ matrix.os }}-ccache-x86_64-
+            ${{ runner.os }}-ubuntu-24.04-ccache-x86_64-
+
+      - name: Validate Plugin Data Folder 📁
+        run: |
+          test -d "${{ github.workspace }}/data/effects"
+          test -d "${{ github.workspace }}/data/locale"
+          find "${{ github.workspace }}/data" -type f
 
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
@@ -227,27 +227,27 @@ jobs:
       - name: Upload Source Tarball 🗜️
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-${{ matrix.os }}-sources-${{ needs.check-event.outputs.commitHash }}
+          name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-ubuntu-24.04-sources-${{ needs.check-event.outputs.commitHash }}
           path: ${{ github.workspace }}/release/${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-source.*
 
       - name: Upload Artifacts 📡
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-${{ matrix.os }}-x86_64-${{ needs.check-event.outputs.commitHash }}
+          name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-ubuntu-24.04-x86_64-${{ needs.check-event.outputs.commitHash }}
           path: ${{ github.workspace }}/release/${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-x86_64*.*
 
       - name: Upload debug symbol artifacts 🪲
         uses: actions/upload-artifact@v4
         if: ${{ fromJSON(needs.check-event.outputs.package) }}
         with:
-          name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-${{ matrix.os }}-x86_64-${{ needs.check-event.outputs.commitHash }}-dbgsym
+          name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-ubuntu-24.04-x86_64-${{ needs.check-event.outputs.commitHash }}-dbgsym
           path: ${{ github.workspace }}/release/${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-x86_64*-dbgsym.ddeb
 
       - uses: actions/cache/save@v4
         if: github.event_name != 'pull_request' && steps.ccache-cache.outputs.cache-hit != 'true'
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ${{ runner.os }}-${{ matrix.os }}-ccache-x86_64-${{ needs.check-event.outputs.config }}
+          key: ${{ runner.os }}-ubuntu-24.04-ccache-x86_64-${{ needs.check-event.outputs.config }}
 
   windows-build:
     name: Build for Windows 🪟
@@ -265,8 +265,7 @@ jobs:
       - name: Set Up Environment 🔧
         id: setup
         run: |
-          # Set Up Environment 🔧
-          if ( $Env:RUNNER_DEBUG -ne $null ) {
+          if ($Env:RUNNER_DEBUG -ne $null) {
             Set-PSDebug -Trace 1
           }
 
@@ -276,6 +275,19 @@ jobs:
 
           "pluginName=${ProductName}" >> $env:GITHUB_OUTPUT
           "pluginVersion=${ProductVersion}" >> $env:GITHUB_OUTPUT
+
+      - name: Validate Plugin Data Folder 📁
+        shell: pwsh
+        run: |
+          if (!(Test-Path "${{ github.workspace }}\data\effects")) {
+            throw "Missing data/effects folder"
+          }
+
+          if (!(Test-Path "${{ github.workspace }}\data\locale")) {
+            throw "Missing data/locale folder"
+          }
+
+          Get-ChildItem "${{ github.workspace }}\data" -Recurse -File
 
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin

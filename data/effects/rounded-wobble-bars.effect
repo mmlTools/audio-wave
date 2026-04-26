@@ -1,0 +1,171 @@
+uniform float4x4 ViewProj;
+uniform float2   source_size;
+uniform float2   resolution;
+uniform float    time;
+uniform float    audio_level;
+uniform float    audio_peak;
+uniform float    audio_bass;
+uniform float    audio_mid;
+uniform float    audio_treble;
+uniform float    band_count;
+uniform float    audio_bands[64];
+uniform float    option1;
+uniform float    option2;
+uniform float    option3;
+uniform float    option4;
+uniform float    option5;
+uniform float    option6;
+uniform float    option7;
+uniform float    option8;
+uniform float4   color1 = {0.00, 0.85, 1.00, 1.00};
+uniform float4   color2 = {0.70, 0.10, 1.00, 1.00};
+uniform float4   color3 = {1.00, 0.30, 0.20, 1.00};
+
+struct VertIn  { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+struct VertOut { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+
+VertOut VSDefault(VertIn v_in)
+{
+    VertOut o;
+    o.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    o.uv  = v_in.uv;
+    return o;
+}
+
+float hash11(float n) { return frac(sin(n) * 43758.5453); }
+
+float band_smooth(float x)
+{
+    x = saturate(x) * max(1.0, band_count - 1.0);
+    int i0 = clamp((int)floor(x), 0, 63);
+    int i1 = clamp(i0 + 1, 0, 63);
+    return lerp(saturate(audio_bands[i0]), saturate(audio_bands[i1]), frac(x));
+}
+
+float3 safe_color3(float4 c, float3 fallback)
+{
+    return (dot(abs(c.rgb), float3(1,1,1)) < 0.0001) ? fallback : saturate(c.rgb);
+}
+
+float sdRoundBox(float2 p, float2 b, float r)
+{
+    float2 q = abs(p) - b + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+
+// Independent energy for one bar — random band, plugin attack/release already applied.
+float bar_energy_raw(float barId)
+{
+    float gate  = smoothstep(0.008, 0.065, audio_level);
+    float rate  = 1.5 + hash11(barId * 43.7 + 1.0) * 8.0;
+    float phase = time * rate + barId * 31.71;
+    float tick  = floor(phase);
+    float age   = frac(phase);
+    float rBand0 = hash11(tick * 67.13 + barId * 23.91);
+    float rBand1 = hash11((tick + 1.0) * 67.13 + barId * 23.91);
+    float t      = smoothstep(0.75, 1.0, age);
+    float amp    = lerp(band_smooth(rBand0), band_smooth(rBand1), t);
+    float gain   = lerp(0.70, 1.35, hash11(tick * 29.3 + barId * 7.1));
+    return saturate(amp * gain * gate * (0.55 + audio_peak * 0.70));
+}
+
+// Bar energy + neighbour spill. Adjacent bars rise too but always shorter
+// than the primary. Uses max() so neighbours can only lift, never reduce.
+float bar_energy(float id, float bars)
+{
+    float e = bar_energy_raw(id);
+    float f1 = 0.52;
+    float f2 = 0.26;
+    float f3 = 0.11;
+    e = max(e, bar_energy_raw(max(id - 1.0, 0.0))       * f1);
+    e = max(e, bar_energy_raw(min(id + 1.0, bars - 1.0)) * f1);
+    e = max(e, bar_energy_raw(max(id - 2.0, 0.0))       * f2);
+    e = max(e, bar_energy_raw(min(id + 2.0, bars - 1.0)) * f2);
+    e = max(e, bar_energy_raw(max(id - 3.0, 0.0))       * f3);
+    e = max(e, bar_energy_raw(min(id + 3.0, bars - 1.0)) * f3);
+    return saturate(e);
+}
+
+float4 PSDefault(VertOut v_in) : TARGET
+{
+    float bars    = floor(lerp(8.0, 64.0, saturate(option1)) + 0.5);
+    float wobble  = saturate(option2);  // 0 = mechanical snap, 1 = liquid bounce
+    float mirror  = saturate(option3);  // 0 = grow from bottom, 1 = grow from centre
+    float gap     = lerp(0.04, 0.38, saturate(option4));
+    float glowStr = saturate(option5);  // 0 = solid bars only, 1 = full glow
+
+    // Bar slot
+    float barCoord = v_in.uv.x * bars;
+    float id       = floor(barCoord);
+    float localX   = frac(barCoord);
+    float slotW    = 1.0 / bars;
+    float barW     = slotW * (1.0 - gap);
+
+    // Energy with neighbour spill
+    float bElem = bar_energy(id, bars);
+
+    // Liquid wobble: purely vertical oscillation, unique per bar.
+    // wobble=0 → bars snap to height instantly (mechanical).
+    // wobble=1 → height bounces and settles like a liquid column.
+    // Each bar has a different freq+phase so they never sync into a horizontal wave.
+    float wobFreq  = 3.5 + hash11(id * 7.31) * 5.0;
+    float wobPhase = hash11(id * 13.17) * 6.2831853;
+    float wobOffset = sin(time * wobFreq + wobPhase)
+                    * 0.07 * wobble
+                    * bElem;
+
+    // Frame margins — bars never reach the canvas edge
+    float margin   = 0.08;
+    float baseline = 1.0 - margin;
+    float maxHFull = baseline - margin;
+    float maxHHalf = maxHFull * 0.5;
+
+    float isMirror = step(0.5, mirror);
+    float maxH     = lerp(maxHFull, maxHHalf, isMirror);
+
+    float barH = saturate(bElem + wobOffset) * maxH;
+
+    // Geometry: non-mirror grows from baseline upward; mirror grows from 0.5 outward
+    float centerY_nm = baseline - barH * 0.5;
+    float halfH_nm   = barH * 0.5;
+    float centerY_mi = 0.5;
+    float halfH_mi   = barH;
+
+    float centerY = lerp(centerY_nm, centerY_mi, isMirror);
+    float halfH   = lerp(halfH_nm,   halfH_mi,   isMirror);
+
+    float2 p  = float2((localX - 0.5) * slotW, v_in.uv.y - centerY);
+    float2 sz = max(float2(barW * 0.5, halfH), float2(0.0005, 0.0005));
+
+    float cornerR = min(sz.x * 0.80, 0.020);
+    float d       = sdRoundBox(p, sz, cornerR);
+
+    // Solid fill — the entire visible output when glow = 0
+    float fill = 1.0 - smoothstep(0.0, 0.0018, d);
+
+    // Glow — zero when glowStr = 0, edge-faded so it never escapes canvas
+    float edgeFade = smoothstep(0.0, margin, v_in.uv.x)
+                   * smoothstep(0.0, margin, 1.0 - v_in.uv.x)
+                   * smoothstep(0.0, margin, v_in.uv.y)
+                   * smoothstep(0.0, margin, 1.0 - v_in.uv.y);
+
+    float glowRadius = glowStr * (0.025 + bElem * 0.030);
+    float bloom      = (1.0 - smoothstep(0.0, max(glowRadius, 0.0001), max(d, 0.0)))
+                     * glowStr * edgeFade;
+
+    // Colour: left→right gradient, flash to color3 on strong hits
+    float barT = (id + 0.5) / bars;
+    float3 c1  = safe_color3(color1, float3(0.00, 0.85, 1.00));
+    float3 c2  = safe_color3(color2, float3(0.70, 0.10, 1.00));
+    float3 c3  = safe_color3(color3, float3(1.00, 0.30, 0.20));
+    float3 col = lerp(c1, c2, barT);
+    col = lerp(col, c3, saturate(bElem * 1.5));
+
+    // Tip brightening on tall bars
+    float tipRatio = saturate((sz.y - abs(p.y)) / max(sz.y, 0.001));
+    col = col * (1.0 + (1.0 - tipRatio) * bElem * 0.55);
+
+    return float4(col, saturate(fill + bloom * 0.65));
+}
+
+technique Draw { pass { vertex_shader = VSDefault(v_in); pixel_shader = PSDefault(v_in); } }

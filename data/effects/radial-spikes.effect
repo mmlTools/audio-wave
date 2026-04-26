@@ -1,0 +1,130 @@
+uniform float4x4 ViewProj;
+uniform float2   source_size;
+uniform float2   resolution;
+uniform float    time;
+uniform float    audio_level;
+uniform float    audio_peak;
+uniform float    audio_bass;
+uniform float    audio_mid;
+uniform float    audio_treble;
+uniform float    band_count;
+uniform float    audio_bands[64];
+uniform float    option1;
+uniform float    option2;
+uniform float    option3;
+uniform float    option4;
+uniform float    option5;
+uniform float    option6;
+uniform float    option7;
+uniform float    option8;
+uniform float4   color1 = {0.00, 0.80, 1.00, 1.00};
+uniform float4   color2 = {1.00, 0.30, 0.80, 1.00};
+uniform float4   color3 = {1.00, 0.70, 0.10, 1.00};
+uniform float4   color4 = {0.10, 1.00, 0.55, 1.00};
+
+struct VertIn  { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+struct VertOut { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+
+VertOut VSDefault(VertIn v_in)
+{
+    VertOut o;
+    o.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    o.uv  = v_in.uv;
+    return o;
+}
+
+float safe_aspect() { return source_size.x / max(1.0, source_size.y); }
+float hash11(float n) { return frac(sin(n) * 43758.5453); }
+
+float band_smooth(float x)
+{
+    x = saturate(x) * max(1.0, band_count - 1.0);
+    int i0 = clamp((int)floor(x), 0, 63);
+    int i1 = clamp(i0 + 1, 0, 63);
+    return lerp(saturate(audio_bands[i0]), saturate(audio_bands[i1]), frac(x));
+}
+
+float3 safe_color3(float4 c, float3 fallback)
+{
+    return (dot(abs(c.rgb), float3(1,1,1)) < 0.0001) ? fallback : saturate(c.rgb);
+}
+
+float3 circ_grad(float t)
+{
+    t = frac(t) * 3.0;
+    float3 ca = safe_color3(color1, float3(0.00, 0.80, 1.00));
+    float3 cb = safe_color3(color2, float3(1.00, 0.30, 0.80));
+    float3 cc = safe_color3(color3, float3(1.00, 0.70, 0.10));
+    float3 col = lerp(ca, cb, saturate(t));
+    col = lerp(col, lerp(cb, cc, saturate(t - 1.0)), step(1.0, t));
+    col = lerp(col, lerp(cc, ca, saturate(t - 2.0)), step(2.0, t));
+    return col;
+}
+
+float glow_line(float d, float width, float glow)
+{
+    float core = 1.0 - smoothstep(width, width * 1.5, d);
+    float halo = 1.0 - smoothstep(width, width + glow, d);
+    return saturate(core + halo * 0.45);
+}
+
+// Each spike independently picks a random band at its own rate.
+// audio_bands[] already carries plugin attack/release smoothing.
+float spike_energy(float sid)
+{
+    float gate  = smoothstep(0.008, 0.065, audio_level);
+    float rate  = 1.2 + hash11(sid * 43.7 + 1.0) * 7.0;
+    float phase = time * rate + sid * 31.71;
+    float tick  = floor(phase);
+    float age   = frac(phase);
+
+    float rBand0 = hash11(tick * 67.13 + sid * 23.91);
+    float rBand1 = hash11((tick + 1.0) * 67.13 + sid * 23.91);
+    float t      = smoothstep(0.75, 1.0, age);
+    float amp    = lerp(band_smooth(rBand0), band_smooth(rBand1), t);
+    float gain   = lerp(0.70, 1.35, hash11(tick * 29.3 + sid * 7.1));
+    return saturate(amp * gain * gate * (0.55 + audio_peak * 0.70));
+}
+
+float4 PSDefault(VertOut v_in) : TARGET
+{
+    float2 p;
+    p.x = (v_in.uv.x - 0.5) * 2.0 * safe_aspect();
+    p.y = (0.5 - v_in.uv.y) * 2.0;
+
+    float r       = length(p);
+    float angNorm = frac(atan2(p.y, p.x) / 6.28318530718 + 1.0);
+    float spikes  = lerp(24.0, 96.0, option1);
+    float sid     = floor(angNorm * spikes);
+    float local   = abs(frac(angNorm * spikes) - 0.5) * 2.0;
+
+    float bElem = spike_energy(sid);
+
+    float inner    = 0.16 + option2 * 0.24;
+    float ringW    = 0.025 + option4 * 0.035;
+    float baseRing = glow_line(abs(r - inner), ringW, 0.055 + audio_level * 0.06);
+
+    float spikeH  = 0.13 + bElem * (0.45 + option3 * 0.75);
+    float outer   = inner + spikeH;
+    float halfW   = 0.075 + option4 * 0.28;
+    float widthM  = 1.0 - smoothstep(halfW, halfW + 0.10, local);
+
+    float radialB = smoothstep(inner - 0.006, inner + 0.012, r)
+                  * (1.0 - smoothstep(outer - 0.025, outer + 0.035, r));
+    float spike   = widthM * radialB;
+    float tipGlow = widthM
+                  * (1.0 - smoothstep(outer - 0.035, outer + 0.065, r))
+                  * smoothstep(outer - 0.085, outer - 0.015, r)
+                  * (0.35 + bElem * 0.95);
+
+    float3 angularCol = circ_grad(angNorm + time * 0.015);
+    float  tColor     = saturate((r - inner) / max(outer - inner, 0.001));
+    float3 tipCol     = safe_color3(color4, float3(0.10, 1.00, 0.55));
+    float3 radialCol  = lerp(angularCol, tipCol, tColor);
+    float3 col        = lerp(angularCol, radialCol, 0.45) * (1.0 + bElem * 0.85);
+
+    float alpha = saturate(baseRing * 0.65 + spike * (0.58 + bElem * 0.55) + tipGlow * 0.55);
+    return float4(col, alpha);
+}
+
+technique Draw { pass { vertex_shader = VSDefault(v_in); pixel_shader = PSDefault(v_in); } }

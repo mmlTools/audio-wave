@@ -1,0 +1,130 @@
+uniform float4x4 ViewProj;
+uniform float2   source_size;
+uniform float2   resolution;
+uniform float    time;
+uniform float    audio_level;
+uniform float    audio_peak;
+uniform float    audio_bass;
+uniform float    audio_mid;
+uniform float    audio_treble;
+uniform float    band_count;
+uniform float    audio_bands[64];
+uniform float    option1;
+uniform float    option2;
+uniform float    option3;
+uniform float    option4;
+uniform float    option5;
+uniform float    option6;
+uniform float    option7;
+uniform float    option8;
+uniform float4   color1 = {0.00, 0.85, 1.00, 1.00};
+uniform float4   color2 = {1.00, 0.20, 0.90, 1.00};
+uniform float4   color3 = {1.00, 0.80, 0.10, 1.00};
+uniform float4   color4 = {0.20, 1.00, 0.50, 1.00};
+
+struct VertIn  { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+struct VertOut { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+
+VertOut VSDefault(VertIn v_in)
+{
+    VertOut o;
+    o.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    o.uv  = v_in.uv;
+    return o;
+}
+
+float hash11(float n) { return frac(sin(n) * 43758.5453); }
+
+float band_smooth(float x)
+{
+    x = saturate(x) * max(1.0, band_count - 1.0);
+    int i0 = clamp((int)floor(x), 0, 63);
+    int i1 = clamp(i0 + 1, 0, 63);
+    return lerp(saturate(audio_bands[i0]), saturate(audio_bands[i1]), frac(x));
+}
+
+float3 safe_color3(float4 c, float3 fallback)
+{
+    return (dot(abs(c.rgb), float3(1,1,1)) < 0.0001) ? fallback : saturate(c.rgb);
+}
+
+float glow_line(float d, float width, float glow)
+{
+    float core = 1.0 - smoothstep(width, width * 1.5, d);
+    float halo = 1.0 - smoothstep(width, width + glow, d);
+    return saturate(core + halo * 0.45);
+}
+
+// Each horizontal position picks a random band independently.
+// No left=bass, right=treble mapping. Plugin attack/release in audio_bands[].
+float element_energy(float id, float circ)
+{
+    float gate  = smoothstep(0.008, 0.065, audio_level);
+    float total = 0.0;
+
+    for (int i = 0; i < 10; ++i)
+    {
+        float fi    = (float)i;
+        float rate  = 0.45 + fi * 0.18 + hash11(fi * 11.37) * 0.65;
+        float phase = time * rate + fi * 91.731;
+        float tick  = floor(phase);
+        float age   = frac(phase);
+
+        float target = hash11(tick * 73.113 + fi * 19.917);
+        float d      = abs(id - target);
+        if (circ > 0.5) d = min(d, 1.0 - d);
+
+        float spread = lerp(0.05, 0.19, hash11(tick * 13.77 + fi * 41.3));
+        float blob   = exp(-(d * d) / max(spread * spread, 0.00001));
+
+        float rBand    = hash11(tick * 51.17 + fi * 23.83);
+        float bandAmp  = band_smooth(rBand);
+        float audioEnv = saturate(bandAmp * 0.60 + audio_peak * 0.40) * gate;
+
+        float env  = smoothstep(0.0, 0.07, age) * (1.0 - smoothstep(0.35, 1.0, age));
+        float gain = lerp(0.65, 1.30, hash11(tick * 29.37 + fi * 7.13));
+
+        total += blob * env * audioEnv * gain;
+    }
+    return saturate(total);
+}
+
+float ribbon_y(float x)
+{
+    float bElem = element_energy(x, 0.0);
+    float y = 0.5;
+    y += sin(x * 6.2831853 * 2.0 + time * (0.8 + option2 * 2.0)) * 0.028;
+    y += sin(x * 6.2831853 * 5.0 - time * 1.2) * 0.015;
+    y += (bElem - 0.15) * lerp(0.08, 0.40, option1);
+    return y;
+}
+
+float4 PSDefault(VertOut v_in) : TARGET
+{
+    float x     = v_in.uv.x;
+    float bElem = element_energy(x, 0.0);
+
+    float y0    = ribbon_y(x);
+    float y1    = ribbon_y(saturate(x + 0.006));
+    float slope = abs(y1 - y0);
+    float width = lerp(0.012, 0.08, option3) + slope * 0.5;
+    float d     = abs(v_in.uv.y - y0);
+
+    float core = glow_line(d, width * (1.0 + bElem * 0.4),
+                           lerp(0.04, 0.28, option4) * (1.0 + bElem * 0.9));
+    float refl = glow_line(abs((1.0 - v_in.uv.y) - y0),
+                           width * 0.45, 0.07) * 0.15;
+
+    float3 c1 = safe_color3(color1, float3(0.00, 0.85, 1.00));
+    float3 c2 = safe_color3(color2, float3(1.00, 0.20, 0.90));
+    float3 c3 = safe_color3(color3, float3(1.00, 0.80, 0.10));
+    float3 c4 = safe_color3(color4, float3(0.20, 1.00, 0.50));
+
+    float3 col = lerp(c1, c2, x);
+    col = lerp(col, c3, bElem * 0.75 + audio_peak * 0.18);
+    col = lerp(col, c4, saturate(bElem * audio_treble * 0.8));
+
+    return float4(col, saturate(core + refl));
+}
+
+technique Draw { pass { vertex_shader = VSDefault(v_in); pixel_shader = PSDefault(v_in); } }

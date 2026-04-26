@@ -1,0 +1,132 @@
+uniform float4x4 ViewProj;
+uniform float2   source_size;
+uniform float2   resolution;
+uniform float    time;
+uniform float    audio_level;
+uniform float    audio_peak;
+uniform float    audio_bass;
+uniform float    audio_mid;
+uniform float    audio_treble;
+uniform float    band_count;
+uniform float    audio_bands[64];
+uniform float    option1;
+uniform float    option2;
+uniform float    option3;
+uniform float    option4;
+uniform float    option5;
+uniform float    option6;
+uniform float    option7;
+uniform float    option8;
+uniform float4   color1 = {1.00, 0.90, 0.50, 1.00};
+uniform float4   color2 = {0.20, 0.60, 1.00, 1.00};
+uniform float4   color3 = {1.00, 0.30, 0.70, 1.00};
+uniform float4   color4 = {0.10, 1.00, 0.70, 1.00};
+
+struct VertIn  { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+struct VertOut { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+
+VertOut VSDefault(VertIn v_in)
+{
+    VertOut o;
+    o.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    o.uv  = v_in.uv;
+    return o;
+}
+
+float safe_aspect() { return source_size.x / max(1.0, source_size.y); }
+float hash11(float n) { return frac(sin(n) * 43758.5453); }
+
+float band_smooth(float x)
+{
+    x = saturate(x) * max(1.0, band_count - 1.0);
+    int i0 = clamp((int)floor(x), 0, 63);
+    int i1 = clamp(i0 + 1, 0, 63);
+    return lerp(saturate(audio_bands[i0]), saturate(audio_bands[i1]), frac(x));
+}
+
+float3 safe_color3(float4 c, float3 fallback)
+{
+    return (dot(abs(c.rgb), float3(1,1,1)) < 0.0001) ? fallback : saturate(c.rgb);
+}
+
+// Each star picks a random band independently — no angle-to-frequency mapping.
+// Plugin attack/release is already baked into audio_bands[].
+float star_energy(float starId)
+{
+    float gate  = smoothstep(0.008, 0.065, audio_level);
+    float rate  = 1.0 + hash11(starId * 43.7 + 1.0) * 5.0;
+    float phase = time * rate + starId * 31.71;
+    float tick  = floor(phase);
+    float age   = frac(phase);
+
+    float rBand0 = hash11(tick * 67.13 + starId * 23.91);
+    float rBand1 = hash11((tick + 1.0) * 67.13 + starId * 23.91);
+    float t      = smoothstep(0.75, 1.0, age);
+    float amp    = lerp(band_smooth(rBand0), band_smooth(rBand1), t);
+    float gain   = lerp(0.70, 1.35, hash11(tick * 29.3 + starId * 7.1));
+    return saturate(amp * gain * gate * (0.50 + audio_peak * 0.75));
+}
+
+float4 PSDefault(VertOut v_in) : TARGET
+{
+    float2 p         = v_in.uv * 2.0 - 1.0;
+    p.x             *= safe_aspect();
+    float base_speed = 0.10 + option1 * 0.28;
+    float star_size  = lerp(0.004, 0.018, option2);
+    float star_count = floor(lerp(24.0, 64.0, option3) + 0.5);
+
+    float acc  = 0.0;
+    float3 col = (float3)0.0;
+    float wsum = 0.0;
+
+    float3 c1 = safe_color3(color1, float3(1.00, 0.90, 0.50));
+    float3 c2 = safe_color3(color2, float3(0.20, 0.60, 1.00));
+    float3 c3 = safe_color3(color3, float3(1.00, 0.30, 0.70));
+    float3 c4 = safe_color3(color4, float3(0.10, 1.00, 0.70));
+
+    for (int i = 0; i < 64; ++i)
+    {
+        float fi = (float)i;
+        if (fi >= star_count) break;
+
+        float energy = star_energy(fi);
+
+        float angle  = hash11(fi * 7.83) * 6.2831853;
+        float phase  = hash11(fi * 1.57);
+        float speed  = base_speed * (0.55 + hash11(fi) * 0.80) * (1.0 + energy * 1.8);
+        float radius = frac(phase + time * speed);
+
+        float2 dir  = float2(cos(angle), sin(angle));
+        float2 sPos = dir * radius;
+
+        float brightness = radius * (0.30 + energy * 1.0);
+        float sz         = star_size + energy * option2 * 0.016 + audio_level * 0.004;
+
+        float d    = length(p - sPos);
+        float spot = 1.0 - smoothstep(sz * 0.5, sz * 1.8, d);
+        float2 toP = p - sPos;
+        float  proj = dot(toP, -dir);
+        float  perp = length(toP - (-dir) * max(proj, 0.0));
+        float  tail = (1.0 - smoothstep(0.0, sz * 0.7, perp))
+                    * (1.0 - smoothstep(0.0, sz * 5.0 * radius, max(proj, 0.0)));
+
+        float contrib = (spot + tail * 0.28) * brightness;
+
+        // Color cycles through all 4 colors by star ID
+        float ct = frac(fi / 16.0);
+        float3 starCol = ct < 0.25 ? lerp(c1, c2, ct * 4.0) :
+                         ct < 0.50 ? lerp(c2, c3, (ct - 0.25) * 4.0) :
+                         ct < 0.75 ? lerp(c3, c4, (ct - 0.50) * 4.0) :
+                                     lerp(c4, c1, (ct - 0.75) * 4.0);
+        starCol = lerp(starCol, c4, energy * 0.5);
+
+        acc  += contrib;
+        col  += starCol * contrib;
+        wsum += contrib;
+    }
+
+    col = (wsum > 0.001) ? col / wsum : c1;
+    return float4(col, saturate(acc));
+}
+
+technique Draw { pass { vertex_shader = VSDefault(v_in); pixel_shader = PSDefault(v_in); } }

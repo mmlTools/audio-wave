@@ -1,0 +1,133 @@
+uniform float4x4 ViewProj;
+uniform float2   source_size;
+uniform float2   resolution;
+uniform float    time;
+uniform float    audio_level;
+uniform float    audio_peak;
+uniform float    audio_bass;
+uniform float    audio_mid;
+uniform float    audio_treble;
+uniform float    band_count;
+uniform float    audio_bands[64];
+uniform float    option1;
+uniform float    option2;
+uniform float    option3;
+uniform float    option4;
+uniform float    option5;
+uniform float    option6;
+uniform float    option7;
+uniform float    option8;
+uniform float4   color1 = {0.00, 0.65, 1.00, 1.00};
+uniform float4   color2 = {0.85, 0.10, 1.00, 1.00};
+uniform float4   color3 = {1.00, 0.55, 0.05, 1.00};
+uniform float4   color4 = {1.00, 1.00, 1.00, 1.00};
+
+struct VertIn  { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+struct VertOut { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+
+VertOut VSDefault(VertIn v_in)
+{
+    VertOut o;
+    o.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    o.uv  = v_in.uv;
+    return o;
+}
+
+float safe_aspect() { return source_size.x / max(1.0, source_size.y); }
+float hash11(float n) { return frac(sin(n) * 43758.5453); }
+
+float band_smooth(float x)
+{
+    x = saturate(x) * max(1.0, band_count - 1.0);
+    int i0 = clamp((int)floor(x), 0, 63);
+    int i1 = clamp(i0 + 1, 0, 63);
+    return lerp(saturate(audio_bands[i0]), saturate(audio_bands[i1]), frac(x));
+}
+
+float3 safe_color3(float4 c, float3 fallback)
+{
+    return (dot(abs(c.rgb), float3(1,1,1)) < 0.0001) ? fallback : saturate(c.rgb);
+}
+
+// Seamless 3-stop gradient around the ring (all 4 colors via safe_color3)
+float3 circ_grad(float t)
+{
+    t = frac(t) * 3.0;
+    float3 ca = safe_color3(color1, float3(0.00, 0.65, 1.00));
+    float3 cb = safe_color3(color2, float3(0.85, 0.10, 1.00));
+    float3 cc = safe_color3(color3, float3(1.00, 0.55, 0.05));
+    float3 col = lerp(ca, cb, saturate(t));
+    col = lerp(col, lerp(cb, cc, saturate(t - 1.0)), step(1.0, t));
+    col = lerp(col, lerp(cc, ca, saturate(t - 2.0)), step(2.0, t));
+    return col;
+}
+
+float glow_line(float d, float width, float glow)
+{
+    float core = 1.0 - smoothstep(width, width * 1.5, d);
+    float halo = 1.0 - smoothstep(width, width + glow, d);
+    return saturate(core + halo * 0.45);
+}
+
+// Segments of the ring each pick a random band independently.
+// circ = 1 wraps distance around the full 0..1 loop.
+float element_energy(float id, float circ)
+{
+    float gate = smoothstep(0.008, 0.065, audio_level);
+    float total = 0.0;
+
+    for (int i = 0; i < 10; ++i)
+    {
+        float fi    = (float)i;
+        float rate  = 0.45 + fi * 0.18 + hash11(fi * 11.37) * 0.65;
+        float phase = time * rate + fi * 91.731;
+        float tick  = floor(phase);
+        float age   = frac(phase);
+
+        float target = hash11(tick * 73.113 + fi * 19.917);
+        float d      = abs(id - target);
+        if (circ > 0.5) d = min(d, 1.0 - d);
+
+        float spread = lerp(0.05, 0.19, hash11(tick * 13.77 + fi * 41.3));
+        float blob   = exp(-(d * d) / max(spread * spread, 0.00001));
+
+        float rBand    = hash11(tick * 51.17 + fi * 23.83);
+        float bandAmp  = band_smooth(rBand);
+        float audioEnv = saturate(bandAmp * 0.60 + audio_peak * 0.40) * gate;
+
+        float env  = smoothstep(0.0, 0.07, age) * (1.0 - smoothstep(0.35, 1.0, age));
+        float gain = lerp(0.65, 1.30, hash11(tick * 29.37 + fi * 7.13));
+
+        total += blob * env * audioEnv * gain;
+    }
+    return saturate(total);
+}
+
+float4 PSDefault(VertOut v_in) : TARGET
+{
+    float2 p = v_in.uv * 2.0 - 1.0;
+    p.x *= safe_aspect();
+
+    float ang   = atan2(p.y, p.x) / 6.2831853 + 0.5;
+    float bElem = element_energy(ang, 1.0);
+
+    float r     = 0.30 + audio_level * 0.09 + bElem * option4 * 0.16;
+    float thick = lerp(0.012, 0.08, option1);
+    float d     = abs(length(p) - r);
+    float ring  = glow_line(d, thick, 0.14 + option2 * 0.28 + bElem * 0.15);
+
+    float sweep = 1.0 - smoothstep(0.0, 0.12,
+                    abs(frac(ang - time * (0.04 + option3 * 0.16)) - 0.5));
+    float centre = (1.0 - smoothstep(0.0, 0.22 + audio_bass * 0.10, length(p)))
+                 * (0.07 + audio_level * 0.18);
+
+    float3 col      = circ_grad(ang);
+    col             = col * (1.0 + bElem * 0.9);
+    float3 flashCol = safe_color3(color4, float3(1.0, 1.0, 1.0));
+    col             = lerp(col, flashCol, sweep * audio_treble * 0.38);
+
+    float alpha = ring * (0.32 + bElem * 0.68 + audio_peak * 0.28) + centre * option2;
+    return float4(col, saturate(alpha));
+}
+
+technique Draw { pass { vertex_shader = VSDefault(v_in); pixel_shader = PSDefault(v_in); } }
