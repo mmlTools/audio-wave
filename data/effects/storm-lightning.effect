@@ -1,0 +1,199 @@
+uniform float4x4 ViewProj;
+uniform float2 source_size;
+uniform float2 resolution;
+uniform float time;
+
+uniform float audio_level;
+uniform float audio_peak;
+uniform float audio_bass;
+uniform float audio_mid;
+uniform float audio_treble;
+uniform float band_count;
+uniform float audio_bands[64];
+
+uniform float option1; // Strike Threshold
+uniform float option2; // Lightning Rays
+uniform float option3; // Bolt Length
+uniform float option4; // Jaggedness
+uniform float option5; // Core Thickness
+uniform float option6; // Glow Thickness
+uniform float option7; // Reactivity
+uniform float option8; // Flicker Speed
+
+uniform float4 color1; // Core Color
+uniform float4 color2; // Glow Color
+uniform float4 color3; // Hot Color
+uniform float4 color4; // Center Flash Color
+
+struct VertIn
+{
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+struct VertOut
+{
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertOut VSDefault(VertIn v_in)
+{
+	VertOut o;
+	o.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	o.uv = v_in.uv;
+	return o;
+}
+
+float hash11(float n)
+{
+	return frac(sin(n * 12.9898) * 43758.5453);
+}
+
+float lineSegment(float2 p, float2 a, float2 b, float thickness)
+{
+	float2 pa = p - a;
+	float2 ba = b - a;
+	float h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.00001), 0.0, 1.0);
+	float d = length(pa - ba * h);
+	return 1.0 - smoothstep(thickness, thickness * 2.0, d);
+}
+
+float bandValue(float t)
+{
+	int i = (int)floor(clamp(t, 0.0, 0.999) * 64.0);
+	i = clamp(i, 0, 63);
+
+	float fft = audio_bands[i];
+
+	float fallback =
+		audio_level  * 0.45 +
+		audio_peak   * 0.35 +
+		audio_bass   * 0.35 +
+		audio_mid    * 0.20 +
+		audio_treble * 0.15;
+
+	return saturate(max(fft, fallback));
+}
+
+float lightningBolt(float2 p, float index, float count, float threshold, float maxLength, float jagged, float coreThickness, float glowThickness, float reactivity, float flickerSpeed, out float hot)
+{
+	float t = (index + 0.5) / count;
+	float audio = bandValue(t);
+
+	float trigger = smoothstep(threshold, threshold + 0.18, audio * reactivity);
+
+	float flicker = 0.55 + 0.45 * hash11(index * 23.7 + floor(time * flickerSpeed));
+	float strength = trigger * flicker;
+
+	hot = smoothstep(0.65, 1.0, strength);
+
+	if (strength <= 0.01)
+		return 0.0;
+
+	float baseAngle = t * 6.2831853;
+
+	float len = maxLength * (0.20 + strength * 0.95);
+
+	float result = 0.0;
+
+	float2 prev = float2(0.0, 0.0);
+
+	for (int j = 1; j <= 24; j++)
+	{
+		float fj = (float)j;
+		if (fj > jagged) break;
+
+		float a0 = (fj - 1.0) / jagged;
+		float a1 = fj / jagged;
+
+		float n0 = hash11(index * 17.1 + fj * 3.7 + floor(time * flickerSpeed));
+		float n1 = hash11(index * 29.3 + fj * 5.2 + floor(time * flickerSpeed));
+
+		float fade0 = saturate(1.0 - abs(a0 - 0.65));
+		float fade1 = saturate(1.0 - abs(a1 - 0.65));
+
+		float off0 = (n0 - 0.5) * 0.55 * fade0;
+		float off1 = (n1 - 0.5) * 0.55 * fade1;
+
+		float2 p0 = float2(cos(baseAngle + off0), sin(baseAngle + off0)) * len * a0;
+		float2 p1 = float2(cos(baseAngle + off1), sin(baseAngle + off1)) * len * a1;
+
+		float glow = lineSegment(p, p0, p1, glowThickness) * 0.40;
+		float core = lineSegment(p, p0, p1, coreThickness);
+
+		result = max(result, saturate(core + glow));
+	}
+
+	return result * strength;
+}
+
+float4 PSDefault(VertOut v) : TARGET
+{
+	float2 uv = v.uv;
+	float2 p = uv * 2.0 - 1.0;
+
+	float aspect = source_size.x / max(source_size.y, 1.0);
+	p.x *= aspect;
+
+	float threshold = lerp(0.02, 0.80, saturate(option1));
+	float rayCount = lerp(8.0, 72.0, saturate(option2));
+	float maxLength = lerp(0.25, 1.45, saturate(option3));
+	float jagged = lerp(4.0, 24.0, saturate(option4));
+	float coreThickness = lerp(0.0025, 0.030, saturate(option5));
+	float glowThickness = lerp(0.010, 0.110, saturate(option6));
+	float reactivity = lerp(0.5, 4.0, saturate(option7));
+	float flickerSpeed = lerp(4.0, 36.0, saturate(option8));
+
+	float lightning = 0.0;
+	float hot = 0.0;
+
+	for (int i = 0; i < 72; i++)
+	{
+		float fi = (float)i;
+		if (fi >= rayCount) break;
+
+		float h = 0.0;
+
+		float bolt = lightningBolt(
+			p,
+			fi,
+			rayCount,
+			threshold,
+			maxLength,
+			jagged,
+			coreThickness,
+			glowThickness,
+			reactivity,
+			flickerSpeed,
+			h
+		);
+
+		lightning = max(lightning, bolt);
+		hot = max(hot, h * bolt);
+	}
+
+	float centerEnergy = saturate(audio_level * 1.5 + audio_peak + audio_bass * 0.8);
+	float centerFlash = 1.0 - smoothstep(0.02, 0.18, length(p));
+	centerFlash *= centerEnergy;
+
+	float3 rgb = float3(0.0, 0.0, 0.0);
+
+	rgb += color2.rgb * lightning * 0.90;
+	rgb += color1.rgb * lightning * 1.55;
+	rgb += color3.rgb * hot * 1.80;
+	rgb += color4.rgb * centerFlash * 0.90;
+
+	float alpha = saturate(lightning + hot * 0.8 + centerFlash * 0.7);
+
+	return float4(rgb, alpha);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSDefault(v);
+	}
+}

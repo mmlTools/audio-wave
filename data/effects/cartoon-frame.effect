@@ -1,0 +1,299 @@
+uniform float4x4 ViewProj;
+uniform float2 source_size;
+uniform float2 resolution;
+uniform float time;
+
+uniform float audio_level;
+uniform float audio_peak;
+uniform float audio_bass;
+uniform float audio_mid;
+uniform float audio_treble;
+uniform float band_count;
+uniform float audio_bands[64];
+
+uniform float option1; // Frame Inset
+uniform float option2; // Frame Thickness
+uniform float option3; // Corner Length
+uniform float option4; // Bar Height
+uniform float option5; // Trigger Level
+uniform float option6; // Cluster Width
+uniform float option7; // Bar Density
+uniform float option8; // Glow Strength
+
+uniform float4 color1; // Frame Color
+uniform float4 color2; // Glow Color
+uniform float4 color3; // Bar Color
+uniform float4 color4; // Hot Bar Color
+
+struct VertIn { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+struct VertOut { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+
+VertOut VSDefault(VertIn v_in)
+{
+	VertOut o;
+	o.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	o.uv = v_in.uv;
+	return o;
+}
+
+float hash11(float n)
+{
+	return frac(sin(n) * 43758.5453123);
+}
+
+float lineSegment(float2 p, float2 a, float2 b, float thickness)
+{
+	float2 pa = p - a;
+	float2 ba = b - a;
+	float h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.00001), 0.0, 1.0);
+	float d = length(pa - ba * h);
+	return 1.0 - smoothstep(thickness, thickness * 2.0, d);
+}
+
+float glowSegment(float2 p, float2 a, float2 b, float spread)
+{
+	float2 pa = p - a;
+	float2 ba = b - a;
+	float h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.00001), 0.0, 1.0);
+	float d = length(pa - ba * h);
+	return exp(-d * spread);
+}
+
+float bandValue(float t)
+{
+	int i = (int)floor(clamp(t, 0.0, 0.999) * 64.0);
+	i = clamp(i, 0, 63);
+
+	float fft = audio_bands[i];
+
+	float fallback =
+		audio_level  * 0.40 +
+		audio_bass   * 0.30 +
+		audio_mid    * 0.20 +
+		audio_treble * 0.15;
+
+	float smoothed = fft * 0.65 + fallback * 0.35;
+    return saturate(smoothed);
+}
+
+float cornerFrame(float2 p, float2 hs, float cornerLen, float thickness)
+{
+	float x = hs.x;
+	float y = hs.y;
+	float l = cornerLen;
+	float m = 0.0;
+
+	m = max(m, lineSegment(p, float2(-x, -y), float2(-x + l, -y), thickness));
+	m = max(m, lineSegment(p, float2(-x, -y), float2(-x, -y + l), thickness));
+
+	m = max(m, lineSegment(p, float2( x, -y), float2( x - l, -y), thickness));
+	m = max(m, lineSegment(p, float2( x, -y), float2( x, -y + l), thickness));
+
+	m = max(m, lineSegment(p, float2( x,  y), float2( x - l,  y), thickness));
+	m = max(m, lineSegment(p, float2( x,  y), float2( x,  y - l), thickness));
+
+	m = max(m, lineSegment(p, float2(-x,  y), float2(-x + l,  y), thickness));
+	m = max(m, lineSegment(p, float2(-x,  y), float2(-x,  y - l), thickness));
+
+	return m;
+}
+
+float cornerGlow(float2 p, float2 hs, float cornerLen, float spread)
+{
+	float x = hs.x;
+	float y = hs.y;
+	float l = cornerLen;
+	float g = 0.0;
+
+	g += glowSegment(p, float2(-x, -y), float2(-x + l, -y), spread);
+	g += glowSegment(p, float2(-x, -y), float2(-x, -y + l), spread);
+
+	g += glowSegment(p, float2( x, -y), float2( x - l, -y), spread);
+	g += glowSegment(p, float2( x, -y), float2( x, -y + l), spread);
+
+	g += glowSegment(p, float2( x,  y), float2( x - l,  y), spread);
+	g += glowSegment(p, float2( x,  y), float2( x,  y - l), spread);
+
+	g += glowSegment(p, float2(-x,  y), float2(-x + l,  y), spread);
+	g += glowSegment(p, float2(-x,  y), float2(-x,  y - l), spread);
+
+	return saturate(g);
+}
+
+void perimeterPoint(float t, float2 hs, out float2 pos, out float2 normal)
+{
+	float edge = frac(t) * 4.0;
+	float side = floor(edge);
+	float u = frac(edge);
+
+	if (side < 1.0)
+	{
+		pos = float2(-hs.x + 2.0 * hs.x * u, -hs.y);
+		normal = float2(0.0, -1.0);
+	}
+	else if (side < 2.0)
+	{
+		pos = float2(hs.x, -hs.y + 2.0 * hs.y * u);
+		normal = float2(1.0, 0.0);
+	}
+	else if (side < 3.0)
+	{
+		pos = float2(hs.x - 2.0 * hs.x * u, hs.y);
+		normal = float2(0.0, 1.0);
+	}
+	else
+	{
+		pos = float2(-hs.x, hs.y - 2.0 * hs.y * u);
+		normal = float2(-1.0, 0.0);
+	}
+}
+
+float barClusterWeight(float indexNorm, float centerNorm, float width)
+{
+	float d = abs(indexNorm - centerNorm);
+	d = min(d, 1.0 - d);
+	return 1.0 - smoothstep(0.0, width, d);
+}
+
+float spectrumBars(float2 p, float2 hs, float thickness, float barHeight, float triggerLevel, float clusterWidth, float density)
+{
+	float energy = saturate(audio_level * 1.2 + audio_peak * 0.8 + audio_bass * 0.7 + audio_mid * 0.45);
+	float trigger = smoothstep(triggerLevel, triggerLevel + 0.12, energy);
+
+    float clusterSpeed = 0.35 + audio_peak * 0.65;
+    float clusterCenter = 0.5 + 0.5 * sin(time * clusterSpeed * 2.3);
+    clusterCenter += 0.18 * sin(time * clusterSpeed * 1.1 + 2.4);
+    clusterCenter = frac(clusterCenter);
+
+	float bars = 0.0;
+
+	for (int i = 0; i < 96; i++)
+	{
+		float fi = (float)i;
+		float count = lerp(24.0, 96.0, saturate(density));
+		if (fi >= count) break;
+
+		float t = (fi + 0.5) / count;
+
+		float2 basePos;
+		float2 normal;
+		perimeterPoint(t, hs, basePos, normal);
+
+		float audio = bandValue(t);
+
+		float cluster = barClusterWeight(t, clusterCenter, clusterWidth);
+		float randomLocal = 0.65 + hash11(fi * 12.989 + clusterTime * 3.7) * 0.70;
+
+		float amp =
+			0.015 +
+			audio * barHeight * 0.45 +
+			trigger * cluster * randomLocal * barHeight * (0.35 + audio_peak * 0.85);
+
+		float2 endPos = basePos + normal * amp;
+
+		float barThickness = thickness * 0.75;
+		float core = lineSegment(p, basePos, endPos, barThickness);
+		float glow = lineSegment(p, basePos, endPos, barThickness * 2.8) * 0.35;
+
+		bars = max(bars, saturate(core + glow) * (0.45 + audio + trigger * cluster));
+	}
+
+	return saturate(bars);
+}
+
+float hotBars(float2 p, float2 hs, float thickness, float barHeight, float triggerLevel, float clusterWidth, float density)
+{
+	float energy = saturate(audio_level * 1.2 + audio_peak * 0.8 + audio_bass * 0.7 + audio_mid * 0.45);
+	float trigger = smoothstep(triggerLevel, triggerLevel + 0.12, energy);
+
+	float clusterTime = floor(time * (1.5 + audio_peak * 3.0));
+	float clusterCenter = hash11(clusterTime * 19.17 + 4.3);
+
+	float bars = 0.0;
+
+	for (int i = 0; i < 96; i++)
+	{
+		float fi = (float)i;
+		float count = lerp(24.0, 96.0, saturate(density));
+		if (fi >= count) break;
+
+		float t = (fi + 0.5) / count;
+		float cluster = barClusterWeight(t, clusterCenter, clusterWidth);
+
+		float2 basePos;
+		float2 normal;
+		perimeterPoint(t, hs, basePos, normal);
+
+		float audio = bandValue(t);
+		float amp = trigger * cluster * barHeight * (0.10 + audio_peak * 0.80 + audio * 0.40);
+
+		float2 endPos = basePos + normal * amp;
+
+		float core = lineSegment(p, basePos, endPos, thickness * 1.15);
+		bars = max(bars, core * cluster * trigger);
+	}
+
+	return saturate(bars);
+}
+
+float4 PSDefault(VertOut v) : TARGET
+{
+	float2 uv = v.uv;
+	float2 p = uv * 2.0 - 1.0;
+
+	float aspect = source_size.x / max(source_size.y, 1.0);
+	p.x *= aspect;
+
+	float inset = lerp(0.02, 0.34, saturate(option1));
+	float thickness = lerp(0.0025, 0.026, saturate(option2));
+	float cornerRatio = lerp(0.05, 0.55, saturate(option3));
+	float barHeight = lerp(0.04, 0.46, saturate(option4));
+	float triggerLevel = lerp(0.02, 0.85, saturate(option5));
+	float clusterWidth = lerp(0.025, 0.18, saturate(option6));
+	float density = saturate(option7);
+	float glowStrength = lerp(0.2, 3.0, saturate(option8));
+
+	float2 hs = float2(aspect * (1.0 - inset), 1.0 - inset);
+
+	float sideMin = min(hs.x, hs.y);
+	float cornerLen = sideMin * cornerRatio * 2.0;
+
+	float energy = saturate(audio_level * 1.4 + audio_peak * 0.75);
+
+	float reactiveThickness = thickness * (1.0 + energy * 0.35);
+
+	float frame = cornerFrame(p, hs, cornerLen, reactiveThickness);
+	float glow1 = cornerGlow(p, hs, cornerLen, 95.0 / glowStrength);
+	float glow2 = cornerGlow(p, hs, cornerLen, 32.0 / glowStrength);
+
+	float bars = spectrumBars(p, hs, reactiveThickness, barHeight, triggerLevel, clusterWidth, density);
+	float hot = hotBars(p, hs, reactiveThickness, barHeight, triggerLevel, clusterWidth, density);
+
+	float3 rgb = float3(0.0, 0.0, 0.0);
+
+	rgb += color2.rgb * glow2 * 0.16 * glowStrength * (1.0 + energy);
+	rgb += color1.rgb * glow1 * 0.20 * glowStrength * (1.0 + energy);
+	rgb += color1.rgb * frame * (1.2 + energy);
+	rgb += color3.rgb * bars * (1.4 + audio_mid * 2.0);
+	rgb += color4.rgb * hot * (2.0 + audio_peak * 3.0);
+
+	float alpha =
+		glow2 * 0.10 * glowStrength +
+		glow1 * 0.16 * glowStrength +
+		frame +
+		bars +
+		hot;
+
+	alpha = saturate(alpha);
+
+	return float4(rgb, alpha);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSDefault(v);
+	}
+}
