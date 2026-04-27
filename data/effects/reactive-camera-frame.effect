@@ -72,8 +72,7 @@ float bandValue(float t)
 		audio_mid    * 0.20 +
 		audio_treble * 0.15;
 
-	float smoothed = fft * 0.65 + fallback * 0.35;
-    return saturate(smoothed);
+	return max(fft, fallback);
 }
 
 float cornerFrame(float2 p, float2 hs, float cornerLen, float thickness)
@@ -160,10 +159,8 @@ float spectrumBars(float2 p, float2 hs, float thickness, float barHeight, float 
 	float energy = saturate(audio_level * 1.2 + audio_peak * 0.8 + audio_bass * 0.7 + audio_mid * 0.45);
 	float trigger = smoothstep(triggerLevel, triggerLevel + 0.12, energy);
 
-    float clusterSpeed = 0.35 + audio_peak * 0.65;
-    float clusterCenter = 0.5 + 0.5 * sin(time * clusterSpeed * 2.3);
-    clusterCenter += 0.18 * sin(time * clusterSpeed * 1.1 + 2.4);
-    clusterCenter = frac(clusterCenter);
+	float clusterTime = floor(time * (1.5 + audio_peak * 3.0));
+	float clusterCenter = hash11(clusterTime * 19.17 + 4.3);
 
 	float bars = 0.0;
 

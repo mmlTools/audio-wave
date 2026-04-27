@@ -487,11 +487,23 @@ static void calculate_audio_state(audio_shader_source *s)
 	s->treble = avg_range(bands * 2 / 3, bands);
 }
 
+// ---------------------------------------------------------------------------
+// Graphics helpers — MUST be called only while the graphics context is held.
+// ---------------------------------------------------------------------------
+
 static void destroy_effect(audio_shader_source *s)
 {
 	if (s && s->effect) {
 		gs_effect_destroy(s->effect);
 		s->effect = nullptr;
+	}
+}
+
+static void destroy_texrender(audio_shader_source *s)
+{
+	if (s && s->texrender) {
+		gs_texrender_destroy(s->texrender);
+		s->texrender = nullptr;
 	}
 }
 
@@ -514,7 +526,8 @@ static void load_effect_if_needed(audio_shader_source *s)
 	s->effect = gs_effect_create_from_file(s->effect_path.c_str(), &error);
 	if (!s->effect) {
 		s->effect_error = error ? error : "Unknown shader compile error";
-		BLOG(LOG_ERROR, "Could not load effect '%s': %s", s->effect_path.c_str(), s->effect_error.c_str());
+		BLOG(LOG_ERROR, "Could not load effect '%s': %s", s->effect_path.c_str(),
+		     s->effect_error.c_str());
 	} else {
 		BLOG(LOG_INFO, "Effect loaded successfully: %s", s->effect_path.c_str());
 	}
@@ -591,15 +604,42 @@ static void draw_fullscreen_quad(audio_shader_source *s)
 	gs_render_stop(GS_TRISTRIP);
 }
 
+// ---------------------------------------------------------------------------
+// source_render
+//
+// Cross-platform rendering strategy:
+//   1. Render the custom effect into an off-screen RGBA texture (gs_texrender_t)
+//      with an explicit orthographic projection matching the source dimensions.
+//      This is mandatory on macOS/Metal where OBS does NOT configure ViewProj
+//      before calling video_render for OBS_SOURCE_CUSTOM_DRAW sources.
+//   2. Composite that texture onto the OBS scene using the built-in "Default"
+//      effect and gs_draw_sprite, which honour the scene's own matrix/viewport
+//      correctly on every platform.
+//
+// This also eliminates the D3D11 crash that occurred when the projection was
+// left in its scene-default state (wrong coordinate mapping → zero-area draw).
+// ---------------------------------------------------------------------------
 static void source_render(void *data, gs_effect_t *)
 {
 	auto *s = static_cast<audio_shader_source *>(data);
 	if (!s)
 		return;
 
+	// Lazily create texrender if it was not available at source_create time.
+	if (!s->texrender) {
+		s->texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+		if (!s->texrender) {
+			BLOG(LOG_ERROR, "Failed to create texrender for source '%s'",
+			     obs_source_get_name(s->self));
+			return;
+		}
+	}
+
 	std::lock_guard<std::mutex> lock(s->render_mutex);
+
 	calculate_audio_state(s);
 	load_effect_if_needed(s);
+
 	if (!s->effect) {
 		if (!s->render_logged_no_effect) {
 			BLOG(LOG_WARNING, "Source '%s' has no loaded effect. Selected path='%s'",
@@ -609,8 +649,7 @@ static void source_render(void *data, gs_effect_t *)
 		return;
 	}
 
-	set_shader_params(s);
-
+	// Find the technique — support multiple naming conventions.
 	gs_technique_t *tech = gs_effect_get_technique(s->effect, "Draw");
 	if (!tech)
 		tech = gs_effect_get_technique(s->effect, "Solid");
@@ -618,22 +657,43 @@ static void source_render(void *data, gs_effect_t *)
 		tech = gs_effect_get_technique(s->effect, "Default");
 	if (!tech) {
 		if (!s->render_logged_no_technique) {
-			BLOG(LOG_ERROR, "Effect '%s' has no Draw, Solid, or Default technique", s->effect_path.c_str());
+			BLOG(LOG_ERROR, "Effect '%s' has no Draw, Solid, or Default technique",
+			     s->effect_path.c_str());
 			s->render_logged_no_technique = true;
 		}
 		return;
 	}
 
+	// Upload uniform values before entering the texrender scope.
+	set_shader_params(s);
+
+	// -----------------------------------------------------------------------
+	// Pass 1: render the custom effect into the off-screen texture.
+	// gs_texrender_begin sets a new framebuffer and saves/restores viewport.
+	// We call gs_ortho immediately after so that ViewProj in the vertex shader
+	// maps (0,0)-(width,height) to the full [-1,+1] NDC cube — identical on
+	// D3D11, OpenGL and Metal.
+	// -----------------------------------------------------------------------
+	gs_texrender_reset(s->texrender);
+	if (!gs_texrender_begin(s->texrender, (int)s->width, (int)s->height)) {
+		BLOG(LOG_WARNING, "gs_texrender_begin failed for source '%s'",
+		     obs_source_get_name(s->self));
+		return;
+	}
+
+	// Clear to fully transparent black.
+	vec4 clear_color = {};
+	gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
+
+	// Establish a clean orthographic projection in source-local space.
+	// This is the critical fix for macOS/Metal transparency.
+	gs_ortho(0.0f, (float)s->width, 0.0f, (float)s->height, -100.0f, 100.0f);
+
 	gs_blend_state_push();
+	gs_reset_blend_state();
 	gs_enable_blending(true);
 	gs_blend_function(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA);
 
-	/* Do not reset the OBS matrix/projection here.
-	 * OBS has already positioned/scaled the source item in the scene.
-	 * Resetting to identity/ortho draws in absolute canvas space, which makes
-	 * the visual appear in the middle of the preview instead of inside the
-	 * selected transparent source rectangle.
-	 */
 	const size_t passes = gs_technique_begin(tech);
 	for (size_t i = 0; i < passes; ++i) {
 		gs_technique_begin_pass(tech, i);
@@ -643,10 +703,39 @@ static void source_render(void *data, gs_effect_t *)
 	gs_technique_end(tech);
 
 	gs_blend_state_pop();
+	gs_texrender_end(s->texrender);
+
+	// -----------------------------------------------------------------------
+	// Pass 2: composite the off-screen texture into the OBS scene.
+	// Using obs_get_base_effect(OBS_EFFECT_DEFAULT) + gs_draw_sprite lets OBS
+	// handle the scene's own projection / viewport, which is correct on every
+	// backend and honours the source's position, scale and rotation in the scene.
+	// -----------------------------------------------------------------------
+	gs_texture_t *tex = gs_texrender_get_texture(s->texrender);
+	if (!tex)
+		return;
+
+	gs_effect_t *draw_effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+	if (!draw_effect)
+		return;
+
+	gs_eparam_t *image_param = gs_effect_get_param_by_name(draw_effect, "image");
+	if (image_param)
+		gs_effect_set_texture(image_param, tex);
+
+	// Pre-multiplied-alpha blend: source already has alpha baked into the
+	// off-screen texture, so use ONE/INV_SRC_ALPHA for correct compositing.
+	gs_blend_state_push();
+	gs_enable_blending(true);
+	gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
+	while (gs_effect_loop(draw_effect, "Draw")) {
+		gs_draw_sprite(tex, 0, s->width, s->height);
+	}
+	gs_blend_state_pop();
 
 	if (!s->render_logged_ok || s->logged_width != s->width || s->logged_height != s->height) {
-		BLOG(LOG_INFO, "Rendering source '%s' with effect '%s' at %ux%u", obs_source_get_name(s->self),
-		     s->effect_path.c_str(), s->width, s->height);
+		BLOG(LOG_INFO, "Rendering source '%s' with effect '%s' at %ux%u",
+		     obs_source_get_name(s->self), s->effect_path.c_str(), s->width, s->height);
 		s->render_logged_ok = true;
 		s->logged_width = s->width;
 		s->logged_height = s->height;
@@ -792,10 +881,10 @@ static void source_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, S_BAND_COUNT, 64);
 	// OBS color format: ABGR where R is the least-significant byte.
 	// Encoding: R | (G << 8) | (B << 16). Alpha is ignored (hardcoded to 1.0 in shader).
-	// color1 = white    #FFFFFF  → R=FF G=FF B=FF → 0xFFFFFF
-	// color2 = cyan     #00D2FF  → R=00 G=D2 B=FF → 0xFFD200
-	// color3 = purple   #9D50BB  → R=9D G=50 B=BB → 0xBB509D
-	// color4 = hot-pink #FF3CAC  → R=FF G=3C B=AC → 0xAC3CFF
+	// color1 = white    #FFFFFF  -> R=FF G=FF B=FF -> 0xFFFFFF
+	// color2 = cyan     #00D2FF  -> R=00 G=D2 B=FF -> 0xFFD200
+	// color3 = purple   #9D50BB  -> R=9D G=50 B=BB -> 0xBB509D
+	// color4 = hot-pink #FF3CAC  -> R=FF G=3C B=AC -> 0xAC3CFF
 	obs_data_set_default_int(settings, "color1", 0xFFFFFF);
 	obs_data_set_default_int(settings, "color2", 0xFFD200);
 	obs_data_set_default_int(settings, "color3", 0xBB509D);
@@ -868,11 +957,25 @@ static void source_update(void *data, obs_data_t *settings)
 
 static void *source_create(obs_data_t *settings, obs_source_t *source)
 {
-	auto *s = new audio_shader_source{};
+	auto *s = new (std::nothrow) audio_shader_source{};
+	if (!s)
+		return nullptr;
+
 	s->self = source;
 	obs_audio_info ai;
 	if (obs_get_audio_info(&ai) && ai.samples_per_sec > 0)
 		s->sample_rate = int(ai.samples_per_sec);
+
+	// Create the off-screen render target inside the graphics context.
+	// This is required on every platform; on macOS it must exist before the
+	// first video_render call or the source will appear transparent.
+	obs_enter_graphics();
+	s->texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+	obs_leave_graphics();
+
+	if (!s->texrender)
+		BLOG(LOG_WARNING, "Could not create texrender at source_create; will retry on first render");
+
 	source_update(s, settings);
 	return s;
 }
@@ -882,14 +985,34 @@ static void source_destroy(void *data)
 	auto *s = static_cast<audio_shader_source *>(data);
 	if (!s)
 		return;
+
+	// Signal the audio callback to stop accepting new work.
 	s->alive.store(false, std::memory_order_release);
+
+	// Remove the audio capture hook so no new callbacks can be posted.
 	detach_audio(s);
+
+	// Spin-wait for any callback that was already in-flight when we detached.
+	// Bounded to 2 seconds; in practice this completes in microseconds.
 	for (int i = 0; i < 2000; ++i) {
 		if (s->audio_cb_inflight.load(std::memory_order_acquire) == 0)
 			break;
 		os_sleep_ms(1);
 	}
+
+	// -----------------------------------------------------------------------
+	// FIX (Windows crash): gs_effect_destroy and gs_texrender_destroy are
+	// Direct3D / Metal / OpenGL API calls and MUST be made while the OBS
+	// graphics context lock is held (obs_enter_graphics).  Calling them from
+	// the main thread without the lock causes a D3D11 context-thread violation
+	// which crashes OBS on Windows.  obs_enter_graphics() waits for the render
+	// thread to finish the current frame, so there is no race with source_render.
+	// -----------------------------------------------------------------------
+	obs_enter_graphics();
 	destroy_effect(s);
+	destroy_texrender(s);
+	obs_leave_graphics();
+
 	release_audio_weak(s);
 	delete s;
 }
