@@ -507,6 +507,40 @@ static void destroy_texrender(audio_shader_source *s)
 	}
 }
 
+static void destroy_quad_texture(audio_shader_source *s)
+{
+	if (s && s->quad_texture) {
+		gs_texture_destroy(s->quad_texture);
+		s->quad_texture = nullptr;
+	}
+}
+
+static bool ensure_render_resources(audio_shader_source *s)
+{
+	if (!s)
+		return false;
+
+	if (!s->texrender) {
+		s->texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+		if (!s->texrender) {
+			BLOG(LOG_ERROR, "Failed to create texrender for source '%s'", obs_source_get_name(s->self));
+			return false;
+		}
+	}
+
+	if (!s->quad_texture) {
+		const uint32_t white_pixel = 0xFFFFFFFFu;
+		const uint8_t *data[] = {reinterpret_cast<const uint8_t *>(&white_pixel)};
+		s->quad_texture = gs_texture_create(1, 1, GS_RGBA, 1, data, 0);
+		if (!s->quad_texture) {
+			BLOG(LOG_ERROR, "Failed to create draw texture for source '%s'", obs_source_get_name(s->self));
+			return false;
+		}
+	}
+
+	return true;
+}
+
 static void load_effect_if_needed(audio_shader_source *s)
 {
 	if (!s || !s->reload_effect)
@@ -592,16 +626,10 @@ static void set_shader_params(audio_shader_source *s)
 
 static void draw_fullscreen_quad(audio_shader_source *s)
 {
-	gs_render_start(true);
-	gs_texcoord(0.0f, 0.0f, 0);
-	gs_vertex2f(0.0f, 0.0f);
-	gs_texcoord(1.0f, 0.0f, 0);
-	gs_vertex2f(float(s->width), 0.0f);
-	gs_texcoord(0.0f, 1.0f, 0);
-	gs_vertex2f(0.0f, float(s->height));
-	gs_texcoord(1.0f, 1.0f, 0);
-	gs_vertex2f(float(s->width), float(s->height));
-	gs_render_stop(GS_TRISTRIP);
+	if (!s || !s->quad_texture)
+		return;
+
+	gs_draw_sprite(s->quad_texture, 0, s->width, s->height);
 }
 
 // ---------------------------------------------------------------------------
@@ -625,17 +653,10 @@ static void source_render(void *data, gs_effect_t *)
 	if (!s)
 		return;
 
-	// Lazily create texrender if it was not available at source_create time.
-	if (!s->texrender) {
-		s->texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
-		if (!s->texrender) {
-			BLOG(LOG_ERROR, "Failed to create texrender for source '%s'",
-			     obs_source_get_name(s->self));
-			return;
-		}
-	}
-
 	std::lock_guard<std::mutex> lock(s->render_mutex);
+
+	if (!ensure_render_resources(s))
+		return;
 
 	calculate_audio_state(s);
 	load_effect_if_needed(s);
@@ -970,11 +991,11 @@ static void *source_create(obs_data_t *settings, obs_source_t *source)
 	// This is required on every platform; on macOS it must exist before the
 	// first video_render call or the source will appear transparent.
 	obs_enter_graphics();
-	s->texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+	ensure_render_resources(s);
 	obs_leave_graphics();
 
-	if (!s->texrender)
-		BLOG(LOG_WARNING, "Could not create texrender at source_create; will retry on first render");
+	if (!s->texrender || !s->quad_texture)
+		BLOG(LOG_WARNING, "Could not create all render resources at source_create; will retry on first render");
 
 	source_update(s, settings);
 	return s;
@@ -1011,6 +1032,7 @@ static void source_destroy(void *data)
 	obs_enter_graphics();
 	destroy_effect(s);
 	destroy_texrender(s);
+	destroy_quad_texture(s);
 	obs_leave_graphics();
 
 	release_audio_weak(s);

@@ -8,7 +8,6 @@ uniform float    audio_bass;
 uniform float    audio_mid;
 uniform float    audio_treble;
 uniform float    band_count;
-uniform float    audio_bands[64];
 uniform float    option1;
 uniform float    option2;
 uniform float    option3;
@@ -37,10 +36,15 @@ float hash11(float n) { return frac(sin(n) * 43758.5453); }
 
 float band_smooth(float x)
 {
-    x = saturate(x) * max(1.0, band_count - 1.0);
-    int i0 = clamp((int)floor(x), 0, 63);
-    int i1 = clamp(i0 + 1, 0, 63);
-    return lerp(saturate(audio_bands[i0]), saturate(audio_bands[i1]), frac(x));
+    x = saturate(x);
+    float low  = audio_bass;
+    float mid  = audio_mid;
+    float high = audio_treble;
+    float a = lerp(low, mid, smoothstep(0.00, 0.55, x));
+    float b = lerp(mid, high, smoothstep(0.45, 1.00, x));
+    float shaped = lerp(a, b, smoothstep(0.35, 0.75, x));
+    float ripple = 0.75 + 0.25 * frac(sin((x + time * 0.017) * 91.345) * 47453.23);
+    return saturate(max(shaped * ripple, audio_level * 0.35));
 }
 
 float3 safe_color3(float4 c, float3 fallback)
@@ -62,7 +66,7 @@ float3 depth_grad(float t)
 
 // Each ring at radius 'r' picks a random band independently.
 // NO if() inside loops — uses step() multiply instead to avoid GLSL driver issues.
-// audio_bands[] already carries plugin attack_ms/release_ms smoothing.
+// plugin-side attack_ms/release_ms smoothing is already applied.
 float ring_energy(float r)
 {
     float gate  = smoothstep(0.005, 0.055, audio_level);
@@ -83,7 +87,7 @@ float ring_energy(float r)
         float spread = lerp(0.06, 0.22, hash11(tick * 19.77 + fi * 37.3));
         float blob   = exp(-(d * d) / max(spread * spread, 0.00001));
 
-        // Random band — decoupled from position. Plugin attack/release in audio_bands[].
+        // Random band — decoupled from position. Plugin attack/release smoothing is already applied.
         float rBand    = hash11(tick * 47.17 + fi * 31.83);
         float bandAmp  = band_smooth(rBand);
         float audioEnv = saturate(bandAmp * 0.65 + audio_peak * 0.35) * gate;

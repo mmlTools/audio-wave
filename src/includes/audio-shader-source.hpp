@@ -65,6 +65,7 @@ struct audio_shader_source {
 	// Also prevents a D3D11/Windows context-thread violation that occurred
 	// when gs_effect_destroy() was called without the graphics lock.
 	gs_texrender_t *texrender = nullptr;
+	gs_texture_t *quad_texture = nullptr;
 
 	// Generic user parameters. Effects can read them as option1..option8.
 	std::array<float, 8> options{};
