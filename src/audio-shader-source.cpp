@@ -263,9 +263,9 @@ static void set_source_dimensions(audio_shader_source *s, uint32_t width, uint32
 	s->height = height;
 	s->render_logged_ok = false;
 
-	if (s->self)
-		obs_source_update_properties(s->self);
-
+	// Do not call obs_source_update_properties() from update/tick paths.
+	// That can re-enter the properties UI while the render state is locked,
+	// and on Windows/D3D11 it can overlap with source rendering during scene load.
 	BLOG(LOG_INFO, "Source canvas size changed to %ux%u", s->width, s->height);
 }
 
@@ -592,16 +592,12 @@ static void set_shader_params(audio_shader_source *s)
 
 static void draw_fullscreen_quad(audio_shader_source *s)
 {
-	gs_render_start(true);
-	gs_texcoord(0.0f, 0.0f, 0);
-	gs_vertex2f(0.0f, 0.0f);
-	gs_texcoord(1.0f, 0.0f, 0);
-	gs_vertex2f(float(s->width), 0.0f);
-	gs_texcoord(0.0f, 1.0f, 0);
-	gs_vertex2f(0.0f, float(s->height));
-	gs_texcoord(1.0f, 1.0f, 0);
-	gs_vertex2f(float(s->width), float(s->height));
-	gs_render_stop(GS_TRISTRIP);
+	// Avoid gs_render_start()/gs_render_stop() here.  Those functions use OBS'
+	// dynamic immediate-mode vertex buffer, and the reported Windows crash happens
+	// inside libobs-d3d11 while uploading that buffer.  gs_draw_sprite(NULL, ...)
+	// uses OBS' backend-owned sprite path and lets libobs/D3D11 own the vertex
+	// upload instead of this plugin racing that state during scene restore.
+	gs_draw_sprite(nullptr, 0, s->width, s->height);
 }
 
 // ---------------------------------------------------------------------------
@@ -625,7 +621,15 @@ static void source_render(void *data, gs_effect_t *)
 	if (!s)
 		return;
 
-	// Lazily create texrender if it was not available at source_create time.
+	std::lock_guard<std::mutex> lock(s->render_mutex);
+
+	if (!s->alive.load(std::memory_order_acquire))
+		return;
+
+	// Lazily create texrender while the render state is locked.  The render
+	// callback already runs on OBS' graphics thread; keeping this under our lock
+	// prevents a source_update/source_destroy overlap from touching the same GPU
+	// object during scene restore.
 	if (!s->texrender) {
 		s->texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
 		if (!s->texrender) {
@@ -634,8 +638,6 @@ static void source_render(void *data, gs_effect_t *)
 			return;
 		}
 	}
-
-	std::lock_guard<std::mutex> lock(s->render_mutex);
 
 	calculate_audio_state(s);
 	load_effect_if_needed(s);
@@ -685,8 +687,11 @@ static void source_render(void *data, gs_effect_t *)
 	vec4 clear_color = {};
 	gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
 
-	// Establish a clean orthographic projection in source-local space.
-	// This is the critical fix for macOS/Metal transparency.
+	// Establish a clean source-local transform without leaking it back into OBS.
+	// This is important on D3D11 because the crash occurs inside OBS' graphics
+	// thread while it continues rendering the surrounding scene/transition.
+	gs_projection_push();
+	gs_matrix_push();
 	gs_ortho(0.0f, (float)s->width, 0.0f, (float)s->height, -100.0f, 100.0f);
 
 	gs_blend_state_push();
@@ -703,6 +708,8 @@ static void source_render(void *data, gs_effect_t *)
 	gs_technique_end(tech);
 
 	gs_blend_state_pop();
+	gs_matrix_pop();
+	gs_projection_pop();
 	gs_texrender_end(s->texrender);
 
 	// -----------------------------------------------------------------------
@@ -790,11 +797,8 @@ static bool reload_effect_clicked(obs_properties_t *props, obs_property_t *, voi
 	if (!s)
 		return false;
 
-	// gs_effect_create_from_file and gs_effect_destroy both need the graphics
-	// context active. obs_enter_graphics() lets us do the full reload immediately
-	// from the UI thread instead of waiting for the next source_render frame,
-	// which may be delayed or never arrive if the source is not being rendered.
-	obs_enter_graphics();
+	// Queue the reload and execute it from source_render on OBS' graphics thread.
+	// This avoids UI-thread graphics work racing D3D11 during startup/scene load.
 	{
 		std::lock_guard<std::mutex> lock(s->render_mutex);
 		s->reload_effect              = true;
@@ -802,11 +806,9 @@ static bool reload_effect_clicked(obs_properties_t *props, obs_property_t *, voi
 		s->render_logged_no_effect    = false;
 		s->render_logged_no_technique = false;
 		s->effect_error.clear();
-		load_effect_if_needed(s); // execute reload now, inside the graphics context
 	}
-	obs_leave_graphics();
 
-	BLOG(LOG_INFO, "Manual shader reload triggered for '%s'", obs_source_get_name(s->self));
+	BLOG(LOG_INFO, "Manual shader reload queued for '%s'", obs_source_get_name(s->self));
 	return true; // true = ask OBS to refresh the properties panel
 }
 
