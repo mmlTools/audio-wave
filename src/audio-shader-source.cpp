@@ -507,6 +507,40 @@ static void destroy_texrender(audio_shader_source *s)
 	}
 }
 
+static void destroy_quad_texture(audio_shader_source *s)
+{
+	if (s && s->quad_texture) {
+		gs_texture_destroy(s->quad_texture);
+		s->quad_texture = nullptr;
+	}
+}
+
+static bool ensure_render_resources(audio_shader_source *s)
+{
+	if (!s)
+		return false;
+
+	if (!s->texrender) {
+		s->texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+		if (!s->texrender) {
+			BLOG(LOG_ERROR, "Failed to create texrender for source '%s'", obs_source_get_name(s->self));
+			return false;
+		}
+	}
+
+	if (!s->quad_texture) {
+		const uint32_t white_pixel = 0xFFFFFFFFu;
+		const uint8_t *data[] = {reinterpret_cast<const uint8_t *>(&white_pixel)};
+		s->quad_texture = gs_texture_create(1, 1, GS_RGBA, 1, data, 0);
+		if (!s->quad_texture) {
+			BLOG(LOG_ERROR, "Failed to create draw texture for source '%s'", obs_source_get_name(s->self));
+			return false;
+		}
+	}
+
+	return true;
+}
+
 static void load_effect_if_needed(audio_shader_source *s)
 {
 	if (!s || !s->reload_effect)
@@ -526,8 +560,7 @@ static void load_effect_if_needed(audio_shader_source *s)
 	s->effect = gs_effect_create_from_file(s->effect_path.c_str(), &error);
 	if (!s->effect) {
 		s->effect_error = error ? error : "Unknown shader compile error";
-		BLOG(LOG_ERROR, "Could not load effect '%s': %s", s->effect_path.c_str(),
-		     s->effect_error.c_str());
+		BLOG(LOG_ERROR, "Could not load effect '%s': %s", s->effect_path.c_str(), s->effect_error.c_str());
 	} else {
 		BLOG(LOG_INFO, "Effect loaded successfully: %s", s->effect_path.c_str());
 	}
@@ -592,12 +625,10 @@ static void set_shader_params(audio_shader_source *s)
 
 static void draw_fullscreen_quad(audio_shader_source *s)
 {
-	// Avoid gs_render_start()/gs_render_stop() here.  Those functions use OBS'
-	// dynamic immediate-mode vertex buffer, and the reported Windows crash happens
-	// inside libobs-d3d11 while uploading that buffer.  gs_draw_sprite(NULL, ...)
-	// uses OBS' backend-owned sprite path and lets libobs/D3D11 own the vertex
-	// upload instead of this plugin racing that state during scene restore.
-	gs_draw_sprite(nullptr, 0, s->width, s->height);
+	if (!s || !s->quad_texture)
+		return;
+
+	gs_draw_sprite(s->quad_texture, 0, s->width, s->height);
 }
 
 // ---------------------------------------------------------------------------
@@ -621,23 +652,19 @@ static void source_render(void *data, gs_effect_t *)
 	if (!s)
 		return;
 
-	std::lock_guard<std::mutex> lock(s->render_mutex);
-
-	if (!s->alive.load(std::memory_order_acquire))
-		return;
-
-	// Lazily create texrender while the render state is locked.  The render
-	// callback already runs on OBS' graphics thread; keeping this under our lock
-	// prevents a source_update/source_destroy overlap from touching the same GPU
-	// object during scene restore.
+	// Lazily create texrender if it was not available at source_create time.
 	if (!s->texrender) {
 		s->texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
 		if (!s->texrender) {
-			BLOG(LOG_ERROR, "Failed to create texrender for source '%s'",
-			     obs_source_get_name(s->self));
+			BLOG(LOG_ERROR, "Failed to create texrender for source '%s'", obs_source_get_name(s->self));
 			return;
 		}
 	}
+
+	std::lock_guard<std::mutex> lock(s->render_mutex);
+
+	if (!ensure_render_resources(s))
+		return;
 
 	calculate_audio_state(s);
 	load_effect_if_needed(s);
@@ -659,8 +686,7 @@ static void source_render(void *data, gs_effect_t *)
 		tech = gs_effect_get_technique(s->effect, "Default");
 	if (!tech) {
 		if (!s->render_logged_no_technique) {
-			BLOG(LOG_ERROR, "Effect '%s' has no Draw, Solid, or Default technique",
-			     s->effect_path.c_str());
+			BLOG(LOG_ERROR, "Effect '%s' has no Draw, Solid, or Default technique", s->effect_path.c_str());
 			s->render_logged_no_technique = true;
 		}
 		return;
@@ -678,8 +704,7 @@ static void source_render(void *data, gs_effect_t *)
 	// -----------------------------------------------------------------------
 	gs_texrender_reset(s->texrender);
 	if (!gs_texrender_begin(s->texrender, (int)s->width, (int)s->height)) {
-		BLOG(LOG_WARNING, "gs_texrender_begin failed for source '%s'",
-		     obs_source_get_name(s->self));
+		BLOG(LOG_WARNING, "gs_texrender_begin failed for source '%s'", obs_source_get_name(s->self));
 		return;
 	}
 
@@ -741,8 +766,8 @@ static void source_render(void *data, gs_effect_t *)
 	gs_blend_state_pop();
 
 	if (!s->render_logged_ok || s->logged_width != s->width || s->logged_height != s->height) {
-		BLOG(LOG_INFO, "Rendering source '%s' with effect '%s' at %ux%u",
-		     obs_source_get_name(s->self), s->effect_path.c_str(), s->width, s->height);
+		BLOG(LOG_INFO, "Rendering source '%s' with effect '%s' at %ux%u", obs_source_get_name(s->self),
+		     s->effect_path.c_str(), s->width, s->height);
 		s->render_logged_ok = true;
 		s->logged_width = s->width;
 		s->logged_height = s->height;
@@ -801,9 +826,9 @@ static bool reload_effect_clicked(obs_properties_t *props, obs_property_t *, voi
 	// This avoids UI-thread graphics work racing D3D11 during startup/scene load.
 	{
 		std::lock_guard<std::mutex> lock(s->render_mutex);
-		s->reload_effect              = true;
-		s->render_logged_ok           = false;
-		s->render_logged_no_effect    = false;
+		s->reload_effect = true;
+		s->render_logged_ok = false;
+		s->render_logged_no_effect = false;
 		s->render_logged_no_technique = false;
 		s->effect_error.clear();
 	}
@@ -828,8 +853,8 @@ static obs_properties_t *source_properties(void *data)
 	obs_property_set_modified_callback(effect_path, effect_path_modified);
 
 	obs_properties_add_button(props, "reload_shader",
-		                         "\xe2\x86\xba  Reload Shader",  // ↺
-		                         reload_effect_clicked);
+				  "\xe2\x86\xba  Reload Shader", // ↺
+				  reload_effect_clicked);
 
 	obs_properties_add_text(props, "effect_metadata_help",
 				"Effect controls are loaded from a sidecar file named your-shader.effect.ini. "
@@ -972,11 +997,11 @@ static void *source_create(obs_data_t *settings, obs_source_t *source)
 	// This is required on every platform; on macOS it must exist before the
 	// first video_render call or the source will appear transparent.
 	obs_enter_graphics();
-	s->texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+	ensure_render_resources(s);
 	obs_leave_graphics();
 
-	if (!s->texrender)
-		BLOG(LOG_WARNING, "Could not create texrender at source_create; will retry on first render");
+	if (!s->texrender || !s->quad_texture)
+		BLOG(LOG_WARNING, "Could not create all render resources at source_create; will retry on first render");
 
 	source_update(s, settings);
 	return s;
@@ -1013,6 +1038,7 @@ static void source_destroy(void *data)
 	obs_enter_graphics();
 	destroy_effect(s);
 	destroy_texrender(s);
+	destroy_quad_texture(s);
 	obs_leave_graphics();
 
 	release_audio_weak(s);

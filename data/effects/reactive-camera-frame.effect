@@ -9,7 +9,6 @@ uniform float audio_bass;
 uniform float audio_mid;
 uniform float audio_treble;
 uniform float band_count;
-uniform float audio_bands[64];
 
 uniform float option1; // Frame Inset
 uniform float option2; // Frame Thickness
@@ -61,18 +60,22 @@ float glowSegment(float2 p, float2 a, float2 b, float spread)
 
 float bandValue(float t)
 {
-	int i = (int)floor(clamp(t, 0.0, 0.999) * 64.0);
-	i = clamp(i, 0, 63);
+    t = saturate(t);
+    float low  = audio_bass;
+    float mid  = audio_mid;
+    float high = audio_treble;
+    float a = lerp(low, mid, smoothstep(0.00, 0.55, t));
+    float b = lerp(mid, high, smoothstep(0.45, 1.00, t));
+    float shaped = lerp(a, b, smoothstep(0.35, 0.75, t));
+    float ripple = 0.75 + 0.25 * hash11(t * 91.345 + floor(time * 3.0));
+    float fallback =
+        audio_level  * 0.40 +
+        audio_peak   * 0.25 +
+        audio_bass   * 0.25 +
+        audio_mid    * 0.15 +
+        audio_treble * 0.10;
 
-	float fft = audio_bands[i];
-
-	float fallback =
-		audio_level  * 0.40 +
-		audio_bass   * 0.30 +
-		audio_mid    * 0.20 +
-		audio_treble * 0.15;
-
-	return max(fft, fallback);
+    return saturate(max(shaped * ripple, fallback));
 }
 
 float cornerFrame(float2 p, float2 hs, float cornerLen, float thickness)

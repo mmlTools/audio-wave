@@ -8,7 +8,6 @@ uniform float    audio_bass;
 uniform float    audio_mid;
 uniform float    audio_treble;
 uniform float    band_count;
-uniform float    audio_bands[64];
 uniform float    option1;
 uniform float    option2;
 uniform float    option3;
@@ -37,10 +36,15 @@ float hash11(float n) { return frac(sin(n * 127.113 + 13.17) * 43758.5453123); }
 
 float band_smooth(float x)
 {
-    x = saturate(x) * max(1.0, band_count - 1.0);
-    int i0 = clamp((int)floor(x), 0, 63);
-    int i1 = clamp(i0 + 1, 0, 63);
-    return lerp(saturate(audio_bands[i0]), saturate(audio_bands[i1]), frac(x));
+    x = saturate(x);
+    float low  = audio_bass;
+    float mid  = audio_mid;
+    float high = audio_treble;
+    float a = lerp(low, mid, smoothstep(0.00, 0.55, x));
+    float b = lerp(mid, high, smoothstep(0.45, 1.00, x));
+    float shaped = lerp(a, b, smoothstep(0.35, 0.75, x));
+    float ripple = 0.75 + 0.25 * frac(sin((x + time * 0.017) * 91.345) * 47453.23);
+    return saturate(max(shaped * ripple, audio_level * 0.35));
 }
 
 float3 safe_color(float4 c, float3 fallback)
@@ -63,7 +67,7 @@ float3 gradient4(float t)
 }
 
 // Each bar picks a random audio band at its own independent rate.
-// audio_bands[] already carries plugin attack_ms / release_ms smoothing,
+// plugin-side attack_ms / release_ms smoothing is already applied,
 // so "jump up on hit, retract on silence" is inherent — no bar syncs with another.
 float bar_energy(float barId, float speed)
 {
