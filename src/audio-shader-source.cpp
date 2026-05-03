@@ -45,8 +45,15 @@ static inline float amp_to_db(float amp)
 static inline float db_to_norm(float db, float react_db, float peak_db)
 {
 	if (peak_db <= react_db)
-		peak_db = react_db + 0.1f;
+		return 0.0f;
 	return clamp01((db - react_db) / (peak_db - react_db));
+}
+
+static inline float hash01(float n)
+{
+	return std::fmod(std::sin(n) * 43758.5453123f, 1.0f) < 0.0f
+		       ? std::fmod(std::sin(n) * 43758.5453123f, 1.0f) + 1.0f
+		       : std::fmod(std::sin(n) * 43758.5453123f, 1.0f);
 }
 
 static inline int clamp_pow2(int value, int min_value, int max_value)
@@ -263,9 +270,6 @@ static void set_source_dimensions(audio_shader_source *s, uint32_t width, uint32
 	s->height = height;
 	s->render_logged_ok = false;
 
-	// Do not call obs_source_update_properties() from update/tick paths.
-	// That can re-enter the properties UI while the render state is locked,
-	// and on Windows/D3D11 it can overlap with source rendering during scene load.
 	BLOG(LOG_INFO, "Source canvas size changed to %ux%u", s->width, s->height);
 }
 
@@ -286,8 +290,6 @@ static void audio_capture_cb(void *param, obs_source_t *, const audio_data *audi
 	s->audio_cb_inflight.fetch_add(1, std::memory_order_acq_rel);
 
 	if (muted || audio->frames == 0 || !audio->data[0]) {
-		// When muted: push silence frames into the ring so the FFT sees silence,
-		// and zero raw values so the exponential smoothers decay to 0.
 		if (muted && audio && audio->frames > 0) {
 			std::lock_guard<std::mutex> lock(s->audio_mutex);
 			const size_t n = s->mono_ring.size();
@@ -454,42 +456,98 @@ static void calculate_audio_state(audio_shader_source *s)
 		raw_bands[(size_t)b] = db_to_norm(amp_to_db(mag / float(n)), s->react_db, s->peak_db);
 	}
 
-	// Smooth the frequency data before it reaches the shader.
-	// This prevents a single FFT bucket from producing one isolated tall bar/line.
-	// Neighboring visual elements receive part of the energy, producing a continuous motion.
-	for (int b = 0; b < bands; ++b) {
-		float weighted = 0.0f;
-		float weight_sum = 0.0f;
-
-		for (int o = -3; o <= 3; ++o) {
-			const int idx = std::clamp(b + o, 0, bands - 1);
-			const float w = 4.0f - float(std::abs(o));
-			weighted += raw_bands[(size_t)idx] * w;
-			weight_sum += w;
-		}
-
-		const float spatial_target = weight_sum > 0.0f ? weighted / weight_sum : raw_bands[(size_t)b];
-		s->bands[(size_t)b] = clamp01(smooth(s->bands[(size_t)b], spatial_target, s->attack_ms, s->release_ms));
-	}
-
-	auto avg_range = [&](int a, int b) {
+	auto avg_raw_range = [&](int a, int b) {
 		float sum = 0.0f;
 		int c = 0;
-		for (int i = a; i < b && i < bands; ++i) {
-			sum += s->bands[(size_t)i];
+		for (int i = std::max(0, a); i < b && i < bands; ++i) {
+			sum += raw_bands[(size_t)i];
 			++c;
 		}
 		return c ? sum / float(c) : 0.0f;
 	};
 
-	s->bass = avg_range(0, bands / 4);
-	s->mid = avg_range(bands / 4, bands * 2 / 3);
-	s->treble = avg_range(bands * 2 / 3, bands);
-}
+	const float raw_bass = avg_raw_range(0, std::max(1, bands / 4));
+	const float raw_mid = avg_raw_range(std::max(1, bands / 4), std::max(2, bands * 2 / 3));
+	const float raw_treble = avg_raw_range(std::max(2, bands * 2 / 3), bands);
 
-// ---------------------------------------------------------------------------
-// Graphics helpers — MUST be called only while the graphics context is held.
-// ---------------------------------------------------------------------------
+	s->bass = clamp01(smooth(s->bass, raw_bass, s->attack_ms, s->release_ms));
+	s->mid = clamp01(smooth(s->mid, raw_mid, s->attack_ms, s->release_ms));
+	s->treble = clamp01(smooth(s->treble, raw_treble, s->attack_ms, s->release_ms));
+
+	auto sample_raw_band = [&](float x) {
+		if (bands <= 1)
+			return raw_bands[0];
+
+		x = x - std::floor(x);
+		const float f = x * float(bands - 1);
+		const int i0 = std::clamp((int)std::floor(f), 0, bands - 1);
+		const int i1 = std::clamp(i0 + 1, 0, bands - 1);
+		const float k = f - float(i0);
+		return raw_bands[(size_t)i0] * (1.0f - k) + raw_bands[(size_t)i1] * k;
+	};
+
+	std::array<float, 64> target_cells{};
+	std::array<bool, 64> used_bands{};
+
+	const float time_bucket = std::floor(float(now / 1000000000.0) * 3.0f);
+	const int peak_slots = std::min(14, bands);
+
+	for (int slot = 0; slot < peak_slots; ++slot) {
+		int best = -1;
+		float best_score = 0.0f;
+
+		for (int b = 0; b < bands; ++b) {
+			if (used_bands[(size_t)b])
+				continue;
+
+			const float left = raw_bands[(size_t)std::max(0, b - 1)];
+			const float right = raw_bands[(size_t)std::min(bands - 1, b + 1)];
+			const float local_contrast = std::max(0.0f, raw_bands[(size_t)b] - (left + right) * 0.35f);
+			const float score = raw_bands[(size_t)b] * 0.70f + local_contrast * 0.85f;
+
+			if (score > best_score) {
+				best_score = score;
+				best = b;
+			}
+		}
+
+		if (best < 0 || best_score <= 0.001f)
+			break;
+
+		used_bands[(size_t)best] = true;
+		if (best > 0)
+			used_bands[(size_t)best - 1] = true;
+		if (best + 1 < bands)
+			used_bands[(size_t)best + 1] = true;
+
+		const float h = hash01(float(best) * 19.731f + float(slot) * 7.113f + time_bucket * 0.173f);
+		const int center = std::clamp((int)std::floor(h * 64.0f), 0, 63);
+		const float gain = 0.72f + hash01(float(best) * 5.371f + float(slot) * 31.91f) * 0.55f;
+		const float amp = clamp01(raw_bands[(size_t)best] * gain * (0.65f + s->peak * 0.55f));
+		const int radius = 2 + (hash01(float(best) * 11.17f + float(slot) * 3.31f) > 0.62f ? 1 : 0);
+
+		for (int off = -radius; off <= radius; ++off) {
+			int idx = center + off;
+			while (idx < 0)
+				idx += 64;
+			while (idx >= 64)
+				idx -= 64;
+
+			const float d = std::fabs(float(off));
+			float falloff = 1.0f;
+			if (d >= 1.0f)
+				falloff = d < 2.0f ? 0.52f : (d < 3.0f ? 0.24f : 0.10f);
+
+			target_cells[(size_t)idx] = std::max(target_cells[(size_t)idx], amp * falloff);
+		}
+	}
+
+	const float floor_energy = s->level * 0.025f;
+	for (size_t i = 0; i < s->bands.size(); ++i) {
+		const float target = clamp01(std::max(target_cells[i], floor_energy));
+		s->bands[i] = clamp01(smooth(s->bands[i], target, s->attack_ms, s->release_ms));
+	}
+}
 
 static void destroy_effect(audio_shader_source *s)
 {
@@ -504,6 +562,14 @@ static void destroy_texrender(audio_shader_source *s)
 	if (s && s->texrender) {
 		gs_texrender_destroy(s->texrender);
 		s->texrender = nullptr;
+	}
+}
+
+static void destroy_band_texture(audio_shader_source *s)
+{
+	if (s && s->band_texture) {
+		gs_texture_destroy(s->band_texture);
+		s->band_texture = nullptr;
 	}
 }
 
@@ -526,8 +592,7 @@ static void load_effect_if_needed(audio_shader_source *s)
 	s->effect = gs_effect_create_from_file(s->effect_path.c_str(), &error);
 	if (!s->effect) {
 		s->effect_error = error ? error : "Unknown shader compile error";
-		BLOG(LOG_ERROR, "Could not load effect '%s': %s", s->effect_path.c_str(),
-		     s->effect_error.c_str());
+		BLOG(LOG_ERROR, "Could not load effect '%s': %s", s->effect_path.c_str(), s->effect_error.c_str());
 	} else {
 		BLOG(LOG_INFO, "Effect loaded successfully: %s", s->effect_path.c_str());
 	}
@@ -559,6 +624,40 @@ static void set_color_param(gs_effect_t *effect, const char *name, uint32_t colo
 	}
 }
 
+static void update_band_texture(audio_shader_source *s)
+{
+	if (!s)
+		return;
+
+	for (size_t i = 0; i < s->bands.size(); ++i) {
+		const size_t px = i * 4;
+		s->band_texture_pixels[px + 0] = uint8_t(clamp01(s->bands[i]) * 255.0f + 0.5f);
+		s->band_texture_pixels[px + 1] = uint8_t(clamp01(s->bass) * 255.0f + 0.5f);
+		s->band_texture_pixels[px + 2] = uint8_t(clamp01(s->mid) * 255.0f + 0.5f);
+		s->band_texture_pixels[px + 3] = uint8_t(clamp01(s->treble) * 255.0f + 0.5f);
+	}
+
+	if (!s->band_texture) {
+		const uint8_t *data[] = {s->band_texture_pixels.data()};
+		s->band_texture = gs_texture_create(64, 1, GS_RGBA, 1, data, GS_DYNAMIC);
+		if (!s->band_texture) {
+			BLOG(LOG_ERROR, "Failed to create FFT band texture for source '%s'",
+			     obs_source_get_name(s->self));
+			return;
+		}
+	} else {
+		gs_texture_set_image(s->band_texture, s->band_texture_pixels.data(), 64 * 4, false);
+	}
+}
+
+static void set_texture_param(gs_effect_t *effect, const char *name, gs_texture_t *texture)
+{
+	if (!texture)
+		return;
+	if (gs_eparam_t *p = gs_effect_get_param_by_name(effect, name))
+		gs_effect_set_texture(p, texture);
+}
+
 static void set_shader_params(audio_shader_source *s)
 {
 	gs_effect_t *e = s->effect;
@@ -575,8 +674,8 @@ static void set_shader_params(audio_shader_source *s)
 	set_float_param(e, "audio_treble", s->treble);
 	set_float_param(e, "band_count", float(s->band_count));
 
-	if (gs_eparam_t *p = gs_effect_get_param_by_name(e, "audio_bands"))
-		gs_effect_set_val(p, s->bands.data(), sizeof(float) * s->bands.size());
+	set_texture_param(e, "audio_band_texture", s->band_texture);
+	set_texture_param(e, "audio_spectrum_texture", s->band_texture);
 
 	for (size_t i = 0; i < s->options.size(); ++i) {
 		char name[32];
@@ -592,29 +691,9 @@ static void set_shader_params(audio_shader_source *s)
 
 static void draw_fullscreen_quad(audio_shader_source *s)
 {
-	// Avoid gs_render_start()/gs_render_stop() here.  Those functions use OBS'
-	// dynamic immediate-mode vertex buffer, and the reported Windows crash happens
-	// inside libobs-d3d11 while uploading that buffer.  gs_draw_sprite(NULL, ...)
-	// uses OBS' backend-owned sprite path and lets libobs/D3D11 own the vertex
-	// upload instead of this plugin racing that state during scene restore.
 	gs_draw_sprite(nullptr, 0, s->width, s->height);
 }
 
-// ---------------------------------------------------------------------------
-// source_render
-//
-// Cross-platform rendering strategy:
-//   1. Render the custom effect into an off-screen RGBA texture (gs_texrender_t)
-//      with an explicit orthographic projection matching the source dimensions.
-//      This is mandatory on macOS/Metal where OBS does NOT configure ViewProj
-//      before calling video_render for OBS_SOURCE_CUSTOM_DRAW sources.
-//   2. Composite that texture onto the OBS scene using the built-in "Default"
-//      effect and gs_draw_sprite, which honour the scene's own matrix/viewport
-//      correctly on every platform.
-//
-// This also eliminates the D3D11 crash that occurred when the projection was
-// left in its scene-default state (wrong coordinate mapping → zero-area draw).
-// ---------------------------------------------------------------------------
 static void source_render(void *data, gs_effect_t *)
 {
 	auto *s = static_cast<audio_shader_source *>(data);
@@ -626,20 +705,16 @@ static void source_render(void *data, gs_effect_t *)
 	if (!s->alive.load(std::memory_order_acquire))
 		return;
 
-	// Lazily create texrender while the render state is locked.  The render
-	// callback already runs on OBS' graphics thread; keeping this under our lock
-	// prevents a source_update/source_destroy overlap from touching the same GPU
-	// object during scene restore.
 	if (!s->texrender) {
 		s->texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
 		if (!s->texrender) {
-			BLOG(LOG_ERROR, "Failed to create texrender for source '%s'",
-			     obs_source_get_name(s->self));
+			BLOG(LOG_ERROR, "Failed to create texrender for source '%s'", obs_source_get_name(s->self));
 			return;
 		}
 	}
 
 	calculate_audio_state(s);
+	update_band_texture(s);
 	load_effect_if_needed(s);
 
 	if (!s->effect) {
@@ -651,7 +726,6 @@ static void source_render(void *data, gs_effect_t *)
 		return;
 	}
 
-	// Find the technique — support multiple naming conventions.
 	gs_technique_t *tech = gs_effect_get_technique(s->effect, "Draw");
 	if (!tech)
 		tech = gs_effect_get_technique(s->effect, "Solid");
@@ -659,37 +733,23 @@ static void source_render(void *data, gs_effect_t *)
 		tech = gs_effect_get_technique(s->effect, "Default");
 	if (!tech) {
 		if (!s->render_logged_no_technique) {
-			BLOG(LOG_ERROR, "Effect '%s' has no Draw, Solid, or Default technique",
-			     s->effect_path.c_str());
+			BLOG(LOG_ERROR, "Effect '%s' has no Draw, Solid, or Default technique", s->effect_path.c_str());
 			s->render_logged_no_technique = true;
 		}
 		return;
 	}
 
-	// Upload uniform values before entering the texrender scope.
 	set_shader_params(s);
 
-	// -----------------------------------------------------------------------
-	// Pass 1: render the custom effect into the off-screen texture.
-	// gs_texrender_begin sets a new framebuffer and saves/restores viewport.
-	// We call gs_ortho immediately after so that ViewProj in the vertex shader
-	// maps (0,0)-(width,height) to the full [-1,+1] NDC cube — identical on
-	// D3D11, OpenGL and Metal.
-	// -----------------------------------------------------------------------
 	gs_texrender_reset(s->texrender);
 	if (!gs_texrender_begin(s->texrender, (int)s->width, (int)s->height)) {
-		BLOG(LOG_WARNING, "gs_texrender_begin failed for source '%s'",
-		     obs_source_get_name(s->self));
+		BLOG(LOG_WARNING, "gs_texrender_begin failed for source '%s'", obs_source_get_name(s->self));
 		return;
 	}
 
-	// Clear to fully transparent black.
 	vec4 clear_color = {};
 	gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
 
-	// Establish a clean source-local transform without leaking it back into OBS.
-	// This is important on D3D11 because the crash occurs inside OBS' graphics
-	// thread while it continues rendering the surrounding scene/transition.
 	gs_projection_push();
 	gs_matrix_push();
 	gs_ortho(0.0f, (float)s->width, 0.0f, (float)s->height, -100.0f, 100.0f);
@@ -712,12 +772,6 @@ static void source_render(void *data, gs_effect_t *)
 	gs_projection_pop();
 	gs_texrender_end(s->texrender);
 
-	// -----------------------------------------------------------------------
-	// Pass 2: composite the off-screen texture into the OBS scene.
-	// Using obs_get_base_effect(OBS_EFFECT_DEFAULT) + gs_draw_sprite lets OBS
-	// handle the scene's own projection / viewport, which is correct on every
-	// backend and honours the source's position, scale and rotation in the scene.
-	// -----------------------------------------------------------------------
 	gs_texture_t *tex = gs_texrender_get_texture(s->texrender);
 	if (!tex)
 		return;
@@ -730,8 +784,6 @@ static void source_render(void *data, gs_effect_t *)
 	if (image_param)
 		gs_effect_set_texture(image_param, tex);
 
-	// Pre-multiplied-alpha blend: source already has alpha baked into the
-	// off-screen texture, so use ONE/INV_SRC_ALPHA for correct compositing.
 	gs_blend_state_push();
 	gs_enable_blending(true);
 	gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
@@ -741,8 +793,8 @@ static void source_render(void *data, gs_effect_t *)
 	gs_blend_state_pop();
 
 	if (!s->render_logged_ok || s->logged_width != s->width || s->logged_height != s->height) {
-		BLOG(LOG_INFO, "Rendering source '%s' with effect '%s' at %ux%u",
-		     obs_source_get_name(s->self), s->effect_path.c_str(), s->width, s->height);
+		BLOG(LOG_INFO, "Rendering source '%s' with effect '%s' at %ux%u", obs_source_get_name(s->self),
+		     s->effect_path.c_str(), s->width, s->height);
 		s->render_logged_ok = true;
 		s->logged_width = s->width;
 		s->logged_height = s->height;
@@ -788,35 +840,28 @@ static bool effect_path_modified(obs_properties_t *props, obs_property_t *, obs_
 
 static bool reload_effect_clicked(obs_properties_t *props, obs_property_t *, void *data)
 {
-	// OBS 28+ passes obs_properties_get_param(props) as the button callback data.
-	// Older OBS passed the source context data directly.
-	// Try the explicit param first; fall back to data for compatibility.
 	auto *s = static_cast<audio_shader_source *>(obs_properties_get_param(props));
 	if (!s)
 		s = static_cast<audio_shader_source *>(data);
 	if (!s)
 		return false;
 
-	// Queue the reload and execute it from source_render on OBS' graphics thread.
-	// This avoids UI-thread graphics work racing D3D11 during startup/scene load.
-	{
-		std::lock_guard<std::mutex> lock(s->render_mutex);
-		s->reload_effect              = true;
-		s->render_logged_ok           = false;
-		s->render_logged_no_effect    = false;
-		s->render_logged_no_technique = false;
-		s->effect_error.clear();
-	}
+	std::lock_guard<std::mutex> lock(s->render_mutex);
+	s->reload_effect = true;
+	s->render_logged_ok = false;
+	s->render_logged_no_effect = false;
+	s->render_logged_no_technique = false;
+	s->effect_error.clear();
 
 	BLOG(LOG_INFO, "Manual shader reload queued for '%s'", obs_source_get_name(s->self));
-	return true; // true = ask OBS to refresh the properties panel
+	return true;
 }
 
 static obs_properties_t *source_properties(void *data)
 {
 	auto *s = static_cast<audio_shader_source *>(data);
 	obs_properties_t *props = obs_properties_create();
-	obs_properties_set_param(props, s, nullptr); // expose source ptr to button callbacks
+	obs_properties_set_param(props, s, nullptr);
 
 	obs_property_t *audio = obs_properties_add_list(props, S_AUDIO_SOURCE, "Audio Source", OBS_COMBO_TYPE_LIST,
 							OBS_COMBO_FORMAT_STRING);
@@ -827,9 +872,7 @@ static obs_properties_t *source_properties(void *data)
 							      nullptr);
 	obs_property_set_modified_callback(effect_path, effect_path_modified);
 
-	obs_properties_add_button(props, "reload_shader",
-		                         "\xe2\x86\xba  Reload Shader",  // ↺
-		                         reload_effect_clicked);
+	obs_properties_add_button(props, "reload_shader", "\xe2\x86\xba  Reload Shader", reload_effect_clicked);
 
 	obs_properties_add_text(props, "effect_metadata_help",
 				"Effect controls are loaded from a sidecar file named your-shader.effect.ini. "
@@ -881,12 +924,6 @@ static void source_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, S_RELEASE_MS, 180);
 	obs_data_set_default_int(settings, S_FFT_SIZE, 2048);
 	obs_data_set_default_int(settings, S_BAND_COUNT, 64);
-	// OBS color format: ABGR where R is the least-significant byte.
-	// Encoding: R | (G << 8) | (B << 16). Alpha is ignored (hardcoded to 1.0 in shader).
-	// color1 = white    #FFFFFF  -> R=FF G=FF B=FF -> 0xFFFFFF
-	// color2 = cyan     #00D2FF  -> R=00 G=D2 B=FF -> 0xFFD200
-	// color3 = purple   #9D50BB  -> R=9D G=50 B=BB -> 0xBB509D
-	// color4 = hot-pink #FF3CAC  -> R=FF G=3C B=AC -> 0xAC3CFF
 	obs_data_set_default_int(settings, "color1", 0xFFFFFF);
 	obs_data_set_default_int(settings, "color2", 0xFFD200);
 	obs_data_set_default_int(settings, "color3", 0xBB509D);
@@ -917,8 +954,6 @@ static void source_update(void *data, obs_data_t *settings)
 	set_source_dimensions(s, next_width, next_height);
 	s->react_db = float(obs_data_get_double(settings, S_REACT_DB));
 	s->peak_db = float(obs_data_get_double(settings, S_PEAK_DB));
-	if (s->peak_db <= s->react_db)
-		s->peak_db = s->react_db + 0.1f;
 	s->attack_ms = float(obs_data_get_int(settings, S_ATTACK_MS));
 	s->release_ms = float(obs_data_get_int(settings, S_RELEASE_MS));
 	s->fft_size = clamp_pow2((int)obs_data_get_int(settings, S_FFT_SIZE), 512, 8192);
@@ -968,9 +1003,6 @@ static void *source_create(obs_data_t *settings, obs_source_t *source)
 	if (obs_get_audio_info(&ai) && ai.samples_per_sec > 0)
 		s->sample_rate = int(ai.samples_per_sec);
 
-	// Create the off-screen render target inside the graphics context.
-	// This is required on every platform; on macOS it must exist before the
-	// first video_render call or the source will appear transparent.
 	obs_enter_graphics();
 	s->texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
 	obs_leave_graphics();
@@ -988,31 +1020,20 @@ static void source_destroy(void *data)
 	if (!s)
 		return;
 
-	// Signal the audio callback to stop accepting new work.
 	s->alive.store(false, std::memory_order_release);
 
-	// Remove the audio capture hook so no new callbacks can be posted.
 	detach_audio(s);
 
-	// Spin-wait for any callback that was already in-flight when we detached.
-	// Bounded to 2 seconds; in practice this completes in microseconds.
 	for (int i = 0; i < 2000; ++i) {
 		if (s->audio_cb_inflight.load(std::memory_order_acquire) == 0)
 			break;
 		os_sleep_ms(1);
 	}
 
-	// -----------------------------------------------------------------------
-	// FIX (Windows crash): gs_effect_destroy and gs_texrender_destroy are
-	// Direct3D / Metal / OpenGL API calls and MUST be made while the OBS
-	// graphics context lock is held (obs_enter_graphics).  Calling them from
-	// the main thread without the lock causes a D3D11 context-thread violation
-	// which crashes OBS on Windows.  obs_enter_graphics() waits for the render
-	// thread to finish the current frame, so there is no race with source_render.
-	// -----------------------------------------------------------------------
 	obs_enter_graphics();
 	destroy_effect(s);
 	destroy_texrender(s);
+	destroy_band_texture(s);
 	obs_leave_graphics();
 
 	release_audio_weak(s);

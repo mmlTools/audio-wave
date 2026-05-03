@@ -8,6 +8,12 @@ uniform float    audio_bass;
 uniform float    audio_mid;
 uniform float    audio_treble;
 uniform float    band_count;
+uniform texture2d audio_band_texture;
+sampler_state audioBandSampler {
+    Filter   = Linear;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
 uniform float    option1;
 uniform float    option2;
 uniform float    option3;
@@ -36,15 +42,10 @@ float hash11(float n) { return frac(sin(n * 127.113 + 13.17) * 43758.5453123); }
 
 float band_smooth(float x)
 {
-    x = saturate(x);
-    float low  = audio_bass;
-    float mid  = audio_mid;
-    float high = audio_treble;
-    float a = lerp(low, mid, smoothstep(0.00, 0.55, x));
-    float b = lerp(mid, high, smoothstep(0.45, 1.00, x));
-    float shaped = lerp(a, b, smoothstep(0.35, 0.75, x));
-    float ripple = 0.75 + 0.25 * frac(sin((x + time * 0.017) * 91.345) * 47453.23);
-    return saturate(max(shaped * ripple, audio_level * 0.35));
+    // The plugin uploads a 64-cell visual energy texture. Bright cells are FFT peaks;
+    // neighbours contain lower spill. Sample by visual element position, not randomly.
+    float u = frac(x);
+    return saturate(audio_band_texture.Sample(audioBandSampler, float2(u, 0.5)).r);
 }
 
 float3 safe_color(float4 c, float3 fallback)
@@ -66,26 +67,21 @@ float3 gradient4(float t)
     return lerp(lerp(ab, bc, step(0.33, t)), cd, step(0.66, t));
 }
 
-// Each bar picks a random audio band at its own independent rate.
-// plugin-side attack_ms / release_ms smoothing is already applied,
+// Each bar picks a distributed audio batch at its own independent rate.
+// audio_band_texture already carries plugin attack_ms / release_ms smoothing,
 // so "jump up on hit, retract on silence" is inherent — no bar syncs with another.
 float bar_energy(float barId, float speed)
 {
-    float gate  = smoothstep(0.008, 0.065, audio_level);
-    float rate  = lerp(1.5, 14.0, speed) * (0.7 + hash11(barId * 43.7 + 1.0) * 0.6);
-    float phase = time * rate + barId * 31.71;
-    float tick  = floor(phase);
-    float age   = frac(phase);
-
-    float rBand0 = hash11(tick * 67.13 + barId * 23.91);
-    float rBand1 = hash11((tick + 1.0) * 67.13 + barId * 23.91);
-
-    float t       = smoothstep(0.75, 1.0, age);
-    float bandAmp = lerp(band_smooth(rBand0), band_smooth(rBand1), t);
-
-    float gain = lerp(0.70, 1.35, hash11(tick * 29.3 + barId * 7.1));
-    return saturate(bandAmp * gain * gate * (0.50 + audio_peak * 0.75));
+    float bars = max(floor(lerp(12.0, 96.0, saturate(option1)) + 0.5), 1.0);
+    float u = (barId + 0.5) / bars;
+    float e = band_smooth(u);
+    e = max(e, band_smooth((barId - 0.5) / bars) * 0.52);
+    e = max(e, band_smooth((barId + 1.5) / bars) * 0.52);
+    e = max(e, band_smooth((barId - 1.5) / bars) * 0.24);
+    e = max(e, band_smooth((barId + 2.5) / bars) * 0.24);
+    return saturate(e * (0.85 + audio_peak * 0.30));
 }
+
 
 float4 PSDefault(VertOut v_in) : TARGET
 {

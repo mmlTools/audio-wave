@@ -123,57 +123,56 @@ function Package {
 
     $CopiedData = $false
 
-    $ExactDataCandidates = @(
+    $DataCandidates = @(
         "${InstallRoot}/data/obs-plugins/${ProductName}",
-        "${InstallRoot}/data/${ProductName}"
+        "${InstallRoot}/data/${ProductName}",
+        "${InstallRoot}/data",
+        "${ProjectRoot}/data/obs-plugins/${ProductName}",
+        "${ProjectRoot}/data/${ProductName}",
+        "${ProjectRoot}/data"
     )
 
-    foreach ( $Candidate in $ExactDataCandidates ) {
+    foreach ( $Candidate in $DataCandidates ) {
         if ( Test-Path -LiteralPath $Candidate ) {
-            Copy-DirectoryContents -Source $Candidate -Destination $PluginDataRoot
-            $CopiedData = $true
-            break
-        }
-    }
+            if ( ( Split-Path -Leaf $Candidate ) -eq 'data' ) {
+                $NestedPluginData = Join-Path $Candidate "obs-plugins/${ProductName}"
+                if ( Test-Path -LiteralPath $NestedPluginData ) {
+                    Copy-DirectoryContents -Source $NestedPluginData -Destination $PluginDataRoot
+                    $CopiedData = $true
+                    break
+                }
 
-    if ( ! $CopiedData ) {
-        $ObsPluginsDataRoot = "${InstallRoot}/data/obs-plugins"
-        if ( Test-Path -LiteralPath $ObsPluginsDataRoot ) {
-            $DataFolders = Get-ChildItem -LiteralPath $ObsPluginsDataRoot -Directory -Force
-            if ( $DataFolders.Count -eq 1 ) {
-                Copy-DirectoryContents -Source $DataFolders[0].FullName -Destination $PluginDataRoot
+                $TopLevelItems = Get-ChildItem -LiteralPath $Candidate -Force |
+                    Where-Object { $_.Name -ne 'obs-plugins' }
+
+                if ( $TopLevelItems.Count -gt 0 ) {
+                    foreach ( $Item in $TopLevelItems ) {
+                        Copy-Item -LiteralPath $Item.FullName -Destination $PluginDataRoot -Recurse -Force
+                    }
+                    $CopiedData = $true
+                    break
+                }
+            } else {
+                Copy-DirectoryContents -Source $Candidate -Destination $PluginDataRoot
                 $CopiedData = $true
-            } elseif ( Test-Path -LiteralPath "${ObsPluginsDataRoot}/${ProductName}" ) {
-                Copy-DirectoryContents -Source "${ObsPluginsDataRoot}/${ProductName}" -Destination $PluginDataRoot
-                $CopiedData = $true
+                break
             }
         }
     }
 
-    if ( ! $CopiedData -and ( Test-Path -LiteralPath "${InstallRoot}/data" ) ) {
-        $TopLevelDataItems = Get-ChildItem -LiteralPath "${InstallRoot}/data" -Force |
-            Where-Object { $_.Name -ne 'obs-plugins' }
-
-        if ( $TopLevelDataItems.Count -gt 0 ) {
-            foreach ( $Item in $TopLevelDataItems ) {
-                Copy-Item -LiteralPath $Item.FullName -Destination $PluginDataRoot -Recurse -Force
-            }
-            $CopiedData = $true
-        }
-    }
-
     if ( ! $CopiedData ) {
-        $KnownDataFolders = @('locale', 'locales', 'locale.ini', 'locales.ini', 'images', 'sounds')
+        $KnownDataFolders = @('locale', 'locales', 'effects', 'shaders', 'images', 'sounds')
         foreach ( $Name in $KnownDataFolders ) {
-            $Matches = Get-ChildItem -LiteralPath $InstallRoot -Recurse -Force -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -eq $Name }
+            $Matches = Get-ChildItem -LiteralPath $ProjectRoot -Recurse -Force -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.Name -eq $Name -and
+                    $_.FullName -notmatch '\\build_' -and
+                    $_.FullName -notmatch '\\release\\' -and
+                    $_.FullName -notmatch '\\.git\\'
+                }
 
             foreach ( $Match in $Matches ) {
-                if ( $Match.PSIsContainer ) {
-                    Copy-Item -LiteralPath $Match.FullName -Destination $PluginDataRoot -Recurse -Force
-                } else {
-                    Copy-Item -LiteralPath $Match.FullName -Destination $PluginDataRoot -Force
-                }
+                Copy-Item -LiteralPath $Match.FullName -Destination $PluginDataRoot -Recurse -Force
                 $CopiedData = $true
             }
         }

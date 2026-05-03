@@ -6,6 +6,7 @@
 #include <atomic>
 #include <array>
 #include <cstdint>
+#include <cstddef>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -59,16 +60,12 @@ struct audio_shader_source {
 	bool render_logged_no_effect = false;
 	bool render_logged_no_technique = false;
 
-	// Off-screen render target used to isolate our own projection from the
-	// scene's matrix stack.  Required for correct rendering on macOS/Metal,
-	// where OBS does NOT pre-configure ViewProj for CUSTOM_DRAW sources.
-	// Also prevents a D3D11/Windows context-thread violation that occurred
-	// when gs_effect_destroy() was called without the graphics lock.
 	gs_texrender_t *texrender = nullptr;
 
-	// Generic user parameters. Effects can read them as option1..option8.
+	gs_texture_t *band_texture = nullptr;
+	std::array<uint8_t, 64 * 4> band_texture_pixels{};
+
 	std::array<float, 8> options{};
-	// OBS stores colours as ABGR (R in bits 0-7). Values here must match source_defaults.
 	std::array<uint32_t, 4> colors{0xFFFFFFu, 0xFFD200u, 0xBB509Du, 0xAC3CFFu};
 };
 

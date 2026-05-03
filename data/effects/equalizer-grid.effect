@@ -8,6 +8,12 @@ uniform float    audio_bass;
 uniform float    audio_mid;
 uniform float    audio_treble;
 uniform float    band_count;
+uniform texture2d audio_band_texture;
+sampler_state audioBandSampler {
+    Filter   = Linear;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
 uniform float    option1;
 uniform float    option2;
 uniform float    option3;
@@ -36,15 +42,10 @@ float hash11(float n) { return frac(sin(n * 91.3458 + 4.123) * 47453.5453123); }
 
 float band_smooth(float x)
 {
-    x = saturate(x);
-    float low  = audio_bass;
-    float mid  = audio_mid;
-    float high = audio_treble;
-    float a = lerp(low, mid, smoothstep(0.00, 0.55, x));
-    float b = lerp(mid, high, smoothstep(0.45, 1.00, x));
-    float shaped = lerp(a, b, smoothstep(0.35, 0.75, x));
-    float ripple = 0.75 + 0.25 * frac(sin((x + time * 0.017) * 91.345) * 47453.23);
-    return saturate(max(shaped * ripple, audio_level * 0.35));
+    // The plugin uploads a 64-cell visual energy texture. Bright cells are FFT peaks;
+    // neighbours contain lower spill. Sample by visual element position, not randomly.
+    float u = frac(x);
+    return saturate(audio_band_texture.Sample(audioBandSampler, float2(u, 0.5)).r);
 }
 
 float3 safe_color(float4 c, float3 fallback)
@@ -66,23 +67,18 @@ float3 gradient4(float t)
     return lerp(lerp(ab, bc, step(0.33, t)), cd, step(0.66, t));
 }
 
-// Each cell independently picks a random band at its own rate.
+// Each cell independently picks a distributed audio batch at its own rate.
 // This prevents any row/column from moving together.
 float cell_energy(float id, float speed)
 {
-    float gate  = smoothstep(0.008, 0.065, audio_level);
-    float rate  = lerp(2.0, 16.0, speed) * (0.65 + hash11(id * 53.1 + 3.0) * 0.7);
-    float phase = time * rate + id * 47.13;
-    float tick  = floor(phase);
-    float age   = frac(phase);
-
-    float rBand0 = hash11(tick * 71.13 + id * 29.91);
-    float rBand1 = hash11((tick + 1.0) * 71.13 + id * 29.91);
-    float t      = smoothstep(0.75, 1.0, age);
-    float amp    = lerp(band_smooth(rBand0), band_smooth(rBand1), t);
-    float gain   = lerp(0.65, 1.40, hash11(tick * 37.1 + id * 11.3));
-    return saturate(amp * gain * gate * (0.50 + audio_peak * 0.75));
+    float cells = max(floor(lerp(4.0, 18.0, saturate(option1)) + 0.5), 1.0);
+    float u = frac((id + 0.5) / (cells * cells));
+    float e = band_smooth(u);
+    e = max(e, band_smooth(u - 1.0 / 64.0) * 0.48);
+    e = max(e, band_smooth(u + 1.0 / 64.0) * 0.48);
+    return saturate(e * (0.85 + audio_peak * 0.25));
 }
+
 
 float4 PSDefault(VertOut v_in) : TARGET
 {

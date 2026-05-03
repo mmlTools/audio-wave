@@ -8,6 +8,12 @@ uniform float    audio_bass;
 uniform float    audio_mid;
 uniform float    audio_treble;
 uniform float    band_count;
+uniform texture2d audio_band_texture;
+sampler_state audioBandSampler {
+    Filter   = Linear;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
 uniform float    option1;
 uniform float    option2;
 uniform float    option3;
@@ -37,15 +43,10 @@ float hash11(float n) { return frac(sin(n) * 43758.5453); }
 
 float band_smooth(float x)
 {
-    x = saturate(x);
-    float low  = audio_bass;
-    float mid  = audio_mid;
-    float high = audio_treble;
-    float a = lerp(low, mid, smoothstep(0.00, 0.55, x));
-    float b = lerp(mid, high, smoothstep(0.45, 1.00, x));
-    float shaped = lerp(a, b, smoothstep(0.35, 0.75, x));
-    float ripple = 0.75 + 0.25 * frac(sin((x + time * 0.017) * 91.345) * 47453.23);
-    return saturate(max(shaped * ripple, audio_level * 0.35));
+    // The plugin uploads a 64-cell visual energy texture. Bright cells are FFT peaks;
+    // neighbours contain lower spill. Sample by visual element position, not randomly.
+    float u = frac(x);
+    return saturate(audio_band_texture.Sample(audioBandSampler, float2(u, 0.5)).r);
 }
 
 float3 safe_color3(float4 c, float3 fallback)
@@ -73,39 +74,19 @@ float glow_line(float d, float width, float glow)
     return saturate(core + halo * 0.45);
 }
 
-// Segments of the ring each pick a random band independently.
+// Segments of the ring each pick a distributed audio batch independently.
 // circ = 1 wraps distance around the full 0..1 loop.
 float element_energy(float id, float circ)
 {
-    float gate = smoothstep(0.008, 0.065, audio_level);
-    float total = 0.0;
-
-    for (int i = 0; i < 10; ++i)
-    {
-        float fi    = (float)i;
-        float rate  = 0.45 + fi * 0.18 + hash11(fi * 11.37) * 0.65;
-        float phase = time * rate + fi * 91.731;
-        float tick  = floor(phase);
-        float age   = frac(phase);
-
-        float target = hash11(tick * 73.113 + fi * 19.917);
-        float d      = abs(id - target);
-        if (circ > 0.5) d = min(d, 1.0 - d);
-
-        float spread = lerp(0.05, 0.19, hash11(tick * 13.77 + fi * 41.3));
-        float blob   = exp(-(d * d) / max(spread * spread, 0.00001));
-
-        float rBand    = hash11(tick * 51.17 + fi * 23.83);
-        float bandAmp  = band_smooth(rBand);
-        float audioEnv = saturate(bandAmp * 0.60 + audio_peak * 0.40) * gate;
-
-        float env  = smoothstep(0.0, 0.07, age) * (1.0 - smoothstep(0.35, 1.0, age));
-        float gain = lerp(0.65, 1.30, hash11(tick * 29.37 + fi * 7.13));
-
-        total += blob * env * audioEnv * gain;
-    }
-    return saturate(total);
+    float u = circ > 0.5 ? frac(id) : saturate(id);
+    float e = band_smooth(u);
+    e = max(e, band_smooth(u - 1.0 / 64.0) * 0.52);
+    e = max(e, band_smooth(u + 1.0 / 64.0) * 0.52);
+    e = max(e, band_smooth(u - 2.0 / 64.0) * 0.24);
+    e = max(e, band_smooth(u + 2.0 / 64.0) * 0.24);
+    return saturate(e * (0.85 + audio_peak * 0.30));
 }
+
 
 float4 PSDefault(VertOut v_in) : TARGET
 {

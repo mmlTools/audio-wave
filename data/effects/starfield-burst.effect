@@ -8,6 +8,12 @@ uniform float    audio_bass;
 uniform float    audio_mid;
 uniform float    audio_treble;
 uniform float    band_count;
+uniform texture2d audio_band_texture;
+sampler_state audioBandSampler {
+    Filter   = Linear;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
 uniform float    option1;
 uniform float    option2;
 uniform float    option3;
@@ -37,15 +43,10 @@ float hash11(float n) { return frac(sin(n) * 43758.5453); }
 
 float band_smooth(float x)
 {
-    x = saturate(x);
-    float low  = audio_bass;
-    float mid  = audio_mid;
-    float high = audio_treble;
-    float a = lerp(low, mid, smoothstep(0.00, 0.55, x));
-    float b = lerp(mid, high, smoothstep(0.45, 1.00, x));
-    float shaped = lerp(a, b, smoothstep(0.35, 0.75, x));
-    float ripple = 0.75 + 0.25 * frac(sin((x + time * 0.017) * 91.345) * 47453.23);
-    return saturate(max(shaped * ripple, audio_level * 0.35));
+    // The plugin uploads a 64-cell visual energy texture. Bright cells are FFT peaks;
+    // neighbours contain lower spill. Sample by visual element position, not randomly.
+    float u = frac(x);
+    return saturate(audio_band_texture.Sample(audioBandSampler, float2(u, 0.5)).r);
 }
 
 float3 safe_color3(float4 c, float3 fallback)
@@ -53,23 +54,17 @@ float3 safe_color3(float4 c, float3 fallback)
     return (dot(abs(c.rgb), float3(1,1,1)) < 0.0001) ? fallback : saturate(c.rgb);
 }
 
-// Each star picks a random band independently — no angle-to-frequency mapping.
-// Plugin attack/release smoothing is already applied.
+// Each star picks a distributed audio batch independently — no angle-to-frequency mapping.
+// Plugin attack/release is already baked into audio_band_texture.
 float star_energy(float starId)
 {
-    float gate  = smoothstep(0.008, 0.065, audio_level);
-    float rate  = 1.0 + hash11(starId * 43.7 + 1.0) * 5.0;
-    float phase = time * rate + starId * 31.71;
-    float tick  = floor(phase);
-    float age   = frac(phase);
-
-    float rBand0 = hash11(tick * 67.13 + starId * 23.91);
-    float rBand1 = hash11((tick + 1.0) * 67.13 + starId * 23.91);
-    float t      = smoothstep(0.75, 1.0, age);
-    float amp    = lerp(band_smooth(rBand0), band_smooth(rBand1), t);
-    float gain   = lerp(0.70, 1.35, hash11(tick * 29.3 + starId * 7.1));
-    return saturate(amp * gain * gate * (0.50 + audio_peak * 0.75));
+    float u = frac((starId + 0.5) / 96.0);
+    float e = band_smooth(u);
+    e = max(e, band_smooth(u - 1.0 / 64.0) * 0.50);
+    e = max(e, band_smooth(u + 1.0 / 64.0) * 0.50);
+    return saturate(e * (0.80 + audio_peak * 0.35));
 }
+
 
 float4 PSDefault(VertOut v_in) : TARGET
 {

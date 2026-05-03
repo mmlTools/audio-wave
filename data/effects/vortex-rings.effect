@@ -8,6 +8,12 @@ uniform float    audio_bass;
 uniform float    audio_mid;
 uniform float    audio_treble;
 uniform float    band_count;
+uniform texture2d audio_band_texture;
+sampler_state audioBandSampler {
+    Filter   = Linear;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
 uniform float    option1;
 uniform float    option2;
 uniform float    option3;
@@ -36,15 +42,10 @@ float hash11(float n) { return frac(sin(n) * 43758.5453); }
 
 float band_smooth(float x)
 {
-    x = saturate(x);
-    float low  = audio_bass;
-    float mid  = audio_mid;
-    float high = audio_treble;
-    float a = lerp(low, mid, smoothstep(0.00, 0.55, x));
-    float b = lerp(mid, high, smoothstep(0.45, 1.00, x));
-    float shaped = lerp(a, b, smoothstep(0.35, 0.75, x));
-    float ripple = 0.75 + 0.25 * frac(sin((x + time * 0.017) * 91.345) * 47453.23);
-    return saturate(max(shaped * ripple, audio_level * 0.35));
+    // The plugin uploads a 64-cell visual energy texture. Bright cells are FFT peaks;
+    // neighbours contain lower spill. Sample by visual element position, not randomly.
+    float u = frac(x);
+    return saturate(audio_band_texture.Sample(audioBandSampler, float2(u, 0.5)).r);
 }
 
 float3 safe_color3(float4 c, float3 fallback)
@@ -65,45 +66,20 @@ float3 vortex_grad(float t)
     return col;
 }
 
-// Each twisted segment picks a random audio band independently.
+// Each twisted segment picks a distributed audio batch independently.
 // NO if() inside loops — wrapping done with step() to avoid GLSL driver issues.
 // 'id' is in [0..1], circular (frac-based).
 float segment_energy(float id)
 {
-    float gate  = smoothstep(0.005, 0.055, audio_level);
-    float total = 0.0;
-
-    for (int i = 0; i < 8; ++i)
-    {
-        float fi   = (float)i;
-        float rate = 0.4 + fi * 0.21 + hash11(fi * 17.3) * 0.6;
-        float phase = time * rate + fi * 83.71;
-        float tick  = floor(phase);
-        float age   = frac(phase);
-
-        // Random target segment — completely independent of position in spectrum
-        float target = hash11(tick * 61.13 + fi * 17.91);
-
-        // Circular wrap: min(|id-target|, 1-|id-target|) — done with step, no if()
-        float d    = abs(id - target);
-        float dWrap = 1.0 - d;
-        d = lerp(d, dWrap, step(dWrap, d));  // picks the shorter arc distance
-
-        float spread = lerp(0.04, 0.18, hash11(tick * 19.77 + fi * 37.3));
-        float blob   = exp(-(d * d) / max(spread * spread, 0.00001));
-
-        // Random band sample — decoupled from segment position
-        float rBand    = hash11(tick * 47.17 + fi * 31.83);
-        float bandAmp  = band_smooth(rBand);
-        float audioEnv = saturate(bandAmp * 0.65 + audio_peak * 0.35) * gate;
-
-        float env  = smoothstep(0.0, 0.06, age) * (1.0 - smoothstep(0.40, 1.0, age));
-        float gain = lerp(0.70, 1.35, hash11(tick * 23.37 + fi * 9.13));
-
-        total += blob * env * audioEnv * gain;
-    }
-    return saturate(total);
+    float u = frac(id);
+    float e = band_smooth(u);
+    e = max(e, band_smooth(u - 1.0 / 64.0) * 0.52);
+    e = max(e, band_smooth(u + 1.0 / 64.0) * 0.52);
+    e = max(e, band_smooth(u - 2.0 / 64.0) * 0.24);
+    e = max(e, band_smooth(u + 2.0 / 64.0) * 0.24);
+    return saturate(e * (0.85 + audio_peak * 0.30));
 }
+
 
 float4 PSDefault(VertOut v_in) : TARGET
 {
