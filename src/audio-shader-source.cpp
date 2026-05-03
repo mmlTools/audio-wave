@@ -474,17 +474,6 @@ static void calculate_audio_state(audio_shader_source *s)
 	s->mid = clamp01(smooth(s->mid, raw_mid, s->attack_ms, s->release_ms));
 	s->treble = clamp01(smooth(s->treble, raw_treble, s->attack_ms, s->release_ms));
 
-	auto sample_raw_band = [&](float x) {
-		if (bands <= 1)
-			return raw_bands[0];
-
-		x = x - std::floor(x);
-		const float f = x * float(bands - 1);
-		const int i0 = std::clamp((int)std::floor(f), 0, bands - 1);
-		const int i1 = std::clamp(i0 + 1, 0, bands - 1);
-		const float k = f - float(i0);
-		return raw_bands[(size_t)i0] * (1.0f - k) + raw_bands[(size_t)i1] * k;
-	};
 
 	std::array<float, 64> target_cells{};
 	std::array<bool, 64> used_bands{};
