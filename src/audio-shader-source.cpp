@@ -474,7 +474,6 @@ static void calculate_audio_state(audio_shader_source *s)
 	s->mid = clamp01(smooth(s->mid, raw_mid, s->attack_ms, s->release_ms));
 	s->treble = clamp01(smooth(s->treble, raw_treble, s->attack_ms, s->release_ms));
 
-
 	std::array<float, 64> target_cells{};
 	std::array<bool, 64> used_bands{};
 

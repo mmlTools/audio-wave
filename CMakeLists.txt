@@ -63,10 +63,9 @@ if(ENABLE_QT)
     target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt5::Core Qt5::Widgets)
   endif()
 
-  set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES
-    AUTOMOC ON
-    AUTOUIC ON
-    AUTORCC ON
+  set_target_properties(
+    ${CMAKE_PROJECT_NAME}
+    PROPERTIES AUTOMOC ON AUTOUIC ON AUTORCC ON
   )
 
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ENABLE_QT=1)
@@ -77,22 +76,15 @@ endif()
 # ---------------------------------------------------------------------------
 file(MAKE_DIRECTORY "${AW_GEN_DIR}")
 
-configure_file(
-  "${AW_INC_DIR}/config.hpp.in"
-  "${AW_GEN_DIR}/config.hpp"
-  @ONLY
-)
+configure_file("${AW_INC_DIR}/config.hpp.in" "${AW_GEN_DIR}/config.hpp" @ONLY)
 
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-  "${AW_INC_DIR}"
-  "${AW_SRC_DIR}"
-  "${AW_GEN_DIR}"
-)
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${AW_INC_DIR}" "${AW_SRC_DIR}" "${AW_GEN_DIR}")
 
 # ---------------------------------------------------------------------------
 # Sources
 # ---------------------------------------------------------------------------
-set(OBS_AUDIO_SHADER_SRC
+set(
+  OBS_AUDIO_SHADER_SRC
   "${AW_SRC_DIR}/plugin-main.cpp"
   "${AW_SRC_DIR}/audio-shader-source.cpp"
   "${AW_SRC_DIR}/audio-pulse-filter.cpp"
@@ -100,15 +92,9 @@ set(OBS_AUDIO_SHADER_SRC
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${OBS_AUDIO_SHADER_SRC})
 
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-  PLUGIN_NAME_STR="${_name}"
-  PLUGIN_VERSION_STR="${_version}"
-)
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE PLUGIN_NAME_STR="${_name}" PLUGIN_VERSION_STR="${_version}")
 
-set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES
-  CXX_STANDARD 20
-  CXX_STANDARD_REQUIRED YES
-)
+set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES
   OUTPUT_NAME ${_name}
@@ -118,8 +104,5 @@ set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES
 # Install data folder: effects + locale
 # ---------------------------------------------------------------------------
 if(EXISTS "${AW_DATA_DIR}")
-  install(
-    DIRECTORY "${AW_DATA_DIR}/"
-    DESTINATION "${CMAKE_INSTALL_DATADIR}/obs/obs-plugins/${_name}"
-  )
+  install(DIRECTORY "${AW_DATA_DIR}/" DESTINATION "${CMAKE_INSTALL_DATADIR}/obs/obs-plugins/${_name}")
 endif()
