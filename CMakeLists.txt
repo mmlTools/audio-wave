@@ -95,6 +95,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 set(OBS_AUDIO_SHADER_SRC
   "${AW_SRC_DIR}/plugin-main.cpp"
   "${AW_SRC_DIR}/audio-shader-source.cpp"
+  "${AW_SRC_DIR}/audio-pulse-filter.cpp"
 )
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${OBS_AUDIO_SHADER_SRC})

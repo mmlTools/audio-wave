@@ -478,7 +478,7 @@ static void calculate_audio_state(audio_shader_source *s)
 	std::array<float, 64> target_cells{};
 	std::array<bool, 64> used_bands{};
 
-	const float time_bucket = std::floor(float(now / 1000000000.0) * 3.0f);
+	const float time_bucket = float(std::fmod(std::floor(double(now) / 1000000000.0 * 3.0), 1000000.0));
 	const int peak_slots = std::min(14, bands);
 
 	for (int slot = 0; slot < peak_slots; ++slot) {
@@ -655,7 +655,9 @@ static void set_shader_params(audio_shader_source *s)
 
 	set_vec2_param(e, "source_size", float(s->width), float(s->height));
 	set_vec2_param(e, "resolution", float(s->width), float(s->height));
-	set_float_param(e, "time", float(os_gettime_ns() / 1000000000.0));
+	// Seconds since the source was created. os_gettime_ns() counts from boot on macOS/Linux, and after
+	// a few days of uptime a float can no longer represent per-frame steps, making animations stutter.
+	set_float_param(e, "time", float(double(os_gettime_ns() - s->start_ts_ns) / 1000000000.0));
 	set_float_param(e, "audio_level", s->level);
 	set_float_param(e, "audio_peak", s->peak);
 	set_float_param(e, "audio_bass", s->bass);
@@ -861,7 +863,7 @@ static obs_properties_t *source_properties(void *data)
 							      nullptr);
 	obs_property_set_modified_callback(effect_path, effect_path_modified);
 
-	obs_properties_add_button(props, "reload_shader", "\xe2\x86\xba  Reload Shader", reload_effect_clicked);
+	obs_properties_add_button2(props, "reload_shader", "\xe2\x86\xba  Reload Shader", reload_effect_clicked, s);
 
 	obs_properties_add_text(props, "effect_metadata_help",
 				"Effect controls are loaded from a sidecar file named your-shader.effect.ini. "
@@ -988,6 +990,7 @@ static void *source_create(obs_data_t *settings, obs_source_t *source)
 		return nullptr;
 
 	s->self = source;
+	s->start_ts_ns = os_gettime_ns();
 	obs_audio_info ai;
 	if (obs_get_audio_info(&ai) && ai.samples_per_sec > 0)
 		s->sample_rate = int(ai.samples_per_sec);

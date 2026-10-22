@@ -86,11 +86,11 @@ float4 PSDefault(VertOut v_in) : TARGET
     float glow      = lerp(0.02, 0.18, option4);
 
     float acc = 0.0;
-    float3 col = (float3)0.0;
+    float3 col = float3(0.0, 0.0, 0.0);
 
     for (int layer = 0; layer < 5; ++layer)
     {
-        float lf       = (float)layer;
+        float lf       = float(layer);
         // Each layer uses element_energy at a slightly different position offset
         float layerPos = frac(xPos + lf * 0.17);
         float layerE   = element_energy(layerPos, 0.0);

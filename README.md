@@ -27,6 +27,7 @@ You can use the bundled effects or load your own `.effect` file directly from th
 - Live shader controls exposed in the OBS properties window.
 - Audio uniforms for level, peak, bass, mid, treble, and 64 spectrum bands.
 - Bundled VFX effects, including rings, waves, bars, neon lines, vortex effects, and rounded wobble bars.
+- **Audio Pulse** filter: make any source (image, camera, text, scene) pulse to audio.
 
 ## Bundled effects
 
@@ -49,6 +50,24 @@ Effects are installed under:
 ```text
 data/obs-plugins/audio-wave/effects/
 ```
+
+## Audio Pulse filter
+
+Right-click any source → **Filters** → **+** → **Audio Pulse**. The source then grows, flashes and/or fades in time with audio.
+
+| Setting | What it does |
+|---|---|
+| Audio Source | Which audio to react to. Defaults to the filtered source's own audio (e.g. a media source or a mic-enabled camera). |
+| React To | Overall level, peak, bass, mids or treble. |
+| Pulse Mode | **Follow Volume** tracks loudness continuously; **Beat Kick** fires a pulse on each detected hit and lets it decay. |
+| Beat Sensitivity / Minimum Time Between Beats | Beat Kick only: how easily hits trigger and how close together they may be. |
+| React at dB / Peak at dB | Loudness range that maps to "no pulse" … "full pulse". |
+| Attack / Release | How fast the pulse rises and falls back. |
+| Pulse Power (Size) | How much the source scales at full pulse (0–100%). |
+| Shrink instead of grow | Pulse inwards instead, so nothing extends past the source bounds. |
+| Pulse Anchor | Scale from the center, bottom or top edge. |
+| Brightness Flash | Extra brightness at full pulse (0–200%). |
+| Opacity When Silent | Fade the source down when quiet; 100% disables fading. |
 
 ## Custom effects
 

@@ -77,12 +77,12 @@ float4 PSDefault(VertOut v_in) : TARGET
     float driftSpd  = lerp(0.10,  0.55,  option4);
 
     float field = 0.0;
-    float3 col  = (float3)0.0;
+    float3 col  = float3(0.0, 0.0, 0.0);
     float  wsum = 0.0;
 
     for (int i = 0; i < 10; ++i)
     {
-        float fi = (float)i;
+        float fi = float(i);
         if (fi >= blobCount) break;
 
         // Organic drifting orbit, each blob has unique rates

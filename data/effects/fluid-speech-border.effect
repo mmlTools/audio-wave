@@ -1,0 +1,193 @@
+uniform float4x4 ViewProj;
+uniform float2   source_size;
+uniform float2   resolution;
+uniform float    time;
+
+uniform float    audio_level;
+uniform float    audio_peak;
+uniform float    audio_bass;
+uniform float    audio_mid;
+uniform float    audio_treble;
+uniform float    band_count;
+
+uniform texture2d audio_band_texture;
+sampler_state audioBandSampler {
+    Filter   = Linear;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
+
+uniform float    option1; // Border Inset
+uniform float    option2; // Line Thickness
+uniform float    option3; // Distortion Amount
+uniform float    option4; // Fluid Speed
+uniform float    option5; // Speech Sensitivity
+uniform float    option6; // Glow Strength
+uniform float    option7; // Ripple Detail
+uniform float    option8; // Peak Push
+
+uniform float4   color1 = {1.00, 1.00, 1.00, 1.00};
+uniform float4   color2 = {0.00, 0.82, 1.00, 1.00};
+uniform float4   color3 = {1.00, 0.72, 0.18, 1.00};
+uniform float4   color4 = {0.76, 0.24, 1.00, 1.00};
+
+struct VertIn  { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+struct VertOut { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+
+VertOut VSDefault(VertIn v_in)
+{
+    VertOut o;
+    o.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    o.uv  = v_in.uv;
+    return o;
+}
+
+float band_smooth(float x)
+{
+    float u = frac(x);
+    return saturate(audio_band_texture.Sample(audioBandSampler, float2(u, 0.5)).r);
+}
+
+float3 safe_color3(float4 c, float3 fallback)
+{
+    return (dot(abs(c.rgb), float3(1.0, 1.0, 1.0)) < 0.0001) ? fallback : saturate(c.rgb);
+}
+
+float lineSegment(float2 p, float2 a, float2 b, float thickness)
+{
+    float2 pa = p - a;
+    float2 ba = b - a;
+    float h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.00001), 0.0, 1.0);
+    float d = length(pa - ba * h);
+    return 1.0 - smoothstep(thickness, thickness * 1.65, d);
+}
+
+float glowSegment(float2 p, float2 a, float2 b, float spread)
+{
+    float2 pa = p - a;
+    float2 ba = b - a;
+    float h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.00001), 0.0, 1.0);
+    float d = length(pa - ba * h);
+    return 1.0 - smoothstep(0.0, spread, d);
+}
+
+void perimeterPoint(float t, float2 hs, out float2 pos, out float2 normal)
+{
+    float edge = frac(t) * 4.0;
+    float side = floor(edge);
+    float u = frac(edge);
+
+    if (side < 1.0) {
+        pos = float2(-hs.x + 2.0 * hs.x * u, -hs.y);
+        normal = float2(0.0, -1.0);
+    } else if (side < 2.0) {
+        pos = float2(hs.x, -hs.y + 2.0 * hs.y * u);
+        normal = float2(1.0, 0.0);
+    } else if (side < 3.0) {
+        pos = float2(hs.x - 2.0 * hs.x * u, hs.y);
+        normal = float2(0.0, 1.0);
+    } else {
+        pos = float2(-hs.x, hs.y - 2.0 * hs.y * u);
+        normal = float2(-1.0, 0.0);
+    }
+}
+
+float perimeterEnergy(float t, float sensitivity)
+{
+    float e = band_smooth(t);
+    e = max(e, band_smooth(t - 1.0 / 64.0) * 0.55);
+    e = max(e, band_smooth(t + 1.0 / 64.0) * 0.55);
+    e = max(e, audio_mid * 0.55 + audio_level * 0.35);
+    return saturate(e * sensitivity);
+}
+
+float fluidDisplacement(float t, float sensitivity, float amount, float speed, float detail, float peakPush)
+{
+    float speech = saturate(audio_level * 0.65 + audio_mid * 0.85 + audio_treble * 0.25);
+    float e = perimeterEnergy(t + time * 0.035 * speed, sensitivity);
+    float waveA = sin(t * 6.2831853 * (2.0 + detail * 8.0) + time * speed * 1.7);
+    float waveB = sin(t * 6.2831853 * (5.0 + detail * 18.0) - time * speed * 2.3 + audio_bass * 2.2);
+    float wave = waveA * 0.58 + waveB * 0.42;
+    float push = e * 0.65 + speech * 0.35 + audio_peak * peakPush * 0.35;
+    return wave * amount * (0.30 + push);
+}
+
+float4 PSDefault(VertOut v_in) : TARGET
+{
+    float2 p = v_in.uv * 2.0 - 1.0;
+    float aspect = source_size.x / max(source_size.y, 1.0);
+    p.x *= aspect;
+
+    float inset = lerp(0.035, 0.32, saturate(option1));
+    float thickness = lerp(0.008, 0.040, saturate(option2));
+    float amount = lerp(0.030, 0.22, saturate(option3));
+    float speed = lerp(0.45, 3.50, saturate(option4));
+    float sensitivity = lerp(0.85, 3.20, saturate(option5));
+    float glowStrength = lerp(0.45, 3.20, saturate(option6));
+    float detail = saturate(option7);
+    float peakPush = lerp(0.35, 2.60, saturate(option8));
+
+    float2 hs = float2(aspect * (1.0 - inset), 1.0 - inset);
+    float speech = saturate(audio_level * 0.75 + audio_mid * 0.95 + audio_peak * 0.45);
+    float reactiveThickness = thickness * (1.0 + speech * 0.45);
+    float glowWidth = (0.025 + reactiveThickness * 4.0) * glowStrength * (1.0 + speech * 0.35);
+
+    float border = 0.0;
+    float glow = 0.0;
+    float hot = 0.0;
+    float energyMix = 0.0;
+
+    for (int i = 0; i < 112; i++) {
+        float count = lerp(52.0, 112.0, detail);
+        float fi = float(i);
+        if (fi >= count) break;
+
+        float t0 = fi / count;
+        float t1 = (fi + 1.0) / count;
+        float tm = (fi + 0.5) / count;
+
+        float2 a;
+        float2 b;
+        float2 na;
+        float2 nb;
+        perimeterPoint(t0, hs, a, na);
+        perimeterPoint(t1, hs, b, nb);
+
+        float da = fluidDisplacement(t0, sensitivity, amount, speed, detail, peakPush);
+        float db = fluidDisplacement(t1, sensitivity, amount, speed, detail, peakPush);
+        a += na * da;
+        b += nb * db;
+
+        float e = perimeterEnergy(tm, sensitivity);
+        float core = lineSegment(p, a, b, reactiveThickness * (1.0 + e * 0.35));
+        float halo = glowSegment(p, a, b, glowWidth * (0.65 + e * 0.85));
+        float flash = smoothstep(0.55, 1.0, e + audio_peak * 0.35) * core;
+
+        border = max(border, core);
+        glow = max(glow, halo * (0.35 + e * 0.65));
+        hot = max(hot, flash);
+        energyMix = max(energyMix, e * core);
+    }
+
+    float3 c1 = safe_color3(color1, float3(1.00, 1.00, 1.00));
+    float3 c2 = safe_color3(color2, float3(0.00, 0.82, 1.00));
+    float3 c3 = safe_color3(color3, float3(1.00, 0.72, 0.18));
+    float3 c4 = safe_color3(color4, float3(0.76, 0.24, 1.00));
+
+    float3 col = c1 * border * (1.05 + speech * 0.65);
+    col += c2 * glow * glowStrength * 0.55;
+    col = lerp(col, c4 * max(border, glow * 0.55), energyMix * 0.45);
+    col += c3 * hot * (1.25 + audio_peak * 1.8);
+
+    float alpha = saturate(border + glow * 0.62 + hot * 0.45);
+    return float4(col, alpha);
+}
+
+technique Draw
+{
+    pass
+    {
+        vertex_shader = VSDefault(v_in);
+        pixel_shader = PSDefault(v_in);
+    }
+}

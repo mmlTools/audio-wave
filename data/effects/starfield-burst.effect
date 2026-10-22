@@ -75,7 +75,7 @@ float4 PSDefault(VertOut v_in) : TARGET
     float star_count = floor(lerp(24.0, 64.0, option3) + 0.5);
 
     float acc  = 0.0;
-    float3 col = (float3)0.0;
+    float3 col = float3(0.0, 0.0, 0.0);
     float wsum = 0.0;
 
     float3 c1 = safe_color3(color1, float3(1.00, 0.90, 0.50));
@@ -85,7 +85,7 @@ float4 PSDefault(VertOut v_in) : TARGET
 
     for (int i = 0; i < 64; ++i)
     {
-        float fi = (float)i;
+        float fi = float(i);
         if (fi >= star_count) break;
 
         float energy = star_energy(fi);

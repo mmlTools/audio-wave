@@ -40,6 +40,7 @@ struct audio_shader_source {
 	float attack_ms = 25.0f;
 	float release_ms = 180.0f;
 	uint64_t last_ts_ns = 0;
+	uint64_t start_ts_ns = 0;
 
 	float level = 0.0f;
 	float peak = 0.0f;

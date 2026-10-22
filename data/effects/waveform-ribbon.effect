@@ -109,7 +109,11 @@ float4 PSDefault(VertOut v_in) : TARGET
     col = lerp(col, c3, bElem * 0.75 + audio_peak * 0.18);
     col = lerp(col, c4, saturate(bElem * audio_treble * 0.8));
 
-    return float4(col, saturate(core + refl));
+    // Fade the ribbon out towards the left/right edges instead of cutting it off.
+    float fadeW   = lerp(0.04, 0.35, option5);
+    float edgeFade = smoothstep(0.0, fadeW, x) * smoothstep(0.0, fadeW, 1.0 - x);
+
+    return float4(col, saturate(core + refl) * edgeFade);
 }
 
 technique Draw { pass { vertex_shader = VSDefault(v_in); pixel_shader = PSDefault(v_in); } }

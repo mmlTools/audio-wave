@@ -103,7 +103,7 @@ float lightningBolt(float2 p, float index, float count, float threshold, float m
 
 	for (int j = 1; j <= 24; j++)
 	{
-		float fj = (float)j;
+		float fj = float(j);
 		if (fj > jagged) break;
 
 		float a0 = (fj - 1.0) / jagged;
@@ -152,7 +152,7 @@ float4 PSDefault(VertOut v) : TARGET
 
 	for (int i = 0; i < 72; i++)
 	{
-		float fi = (float)i;
+		float fi = float(i);
 		if (fi >= rayCount) break;
 
 		float h = 0.0;

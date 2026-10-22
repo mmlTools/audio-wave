@@ -169,7 +169,7 @@ float spectrumBars(float2 p, float2 hs, float thickness, float barHeight, float 
 
 	for (int i = 0; i < 96; i++)
 	{
-		float fi = (float)i;
+		float fi = float(i);
 		float count = lerp(24.0, 96.0, saturate(density));
 		if (fi >= count) break;
 
@@ -213,7 +213,7 @@ float hotBars(float2 p, float2 hs, float thickness, float barHeight, float trigg
 
 	for (int i = 0; i < 96; i++)
 	{
-		float fi = (float)i;
+		float fi = float(i);
 		float count = lerp(24.0, 96.0, saturate(density));
 		if (fi >= count) break;
 

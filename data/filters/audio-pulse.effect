@@ -1,0 +1,40 @@
+// Used by the Audio Pulse filter. Keep this file GLSL-translatable:
+// no C-style casts and no scalar-to-vector shorthand.
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float brightness;
+uniform float opacity;
+
+sampler_state def_sampler {
+    Filter   = Linear;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
+
+struct VertData {
+    float4 pos : POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+    VertData v_out;
+    v_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    v_out.uv  = v_in.uv;
+    return v_out;
+}
+
+float4 PSPulse(VertData v_in) : TARGET
+{
+    float4 c = image.Sample(def_sampler, v_in.uv);
+    return float4(c.rgb * brightness, c.a * opacity);
+}
+
+technique Draw
+{
+    pass
+    {
+        vertex_shader = VSDefault(v_in);
+        pixel_shader  = PSPulse(v_in);
+    }
+}
