@@ -18,8 +18,10 @@ jobs:
     permissions:
       contents: read
 
+  # Tags don't rebuild: the release reuses the packages built by the branch push of the same commit.
   build-project:
     name: Build Project 🧱
+    if: github.ref_type != 'tag'
     uses: ./.github/workflows/build-project.yaml
     secrets: inherit
     permissions:
@@ -29,11 +31,16 @@ jobs:
     name: Create Release 🛫
     if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
-    needs: build-project
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      actions: read
     defaults:
       run:
         shell: bash
     steps:
+      - uses: actions/checkout@v4
+
       - name: Check Release Tag ☑️
         id: check
         run: |
@@ -55,10 +62,50 @@ jobs:
             *) echo 'validTag=false' >> $GITHUB_OUTPUT ;;
           esac
 
+          plugin_name="$(jq -r '.displayName // .name' buildspec.json)"
+          echo "pluginName=${plugin_name}" >> $GITHUB_OUTPUT
+
+          # The reused packages carry the buildspec version in their names, so the tag must match it.
+          spec_version="$(jq -r '.version' buildspec.json)"
+          if grep -q '^validTag=true$' "${GITHUB_OUTPUT}" && [[ "${GITHUB_REF_NAME%%-*}" != "${spec_version}" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match buildspec.json version ${spec_version}."
+            exit 1
+          fi
+
+      - name: Find Branch Build 🔎
+        if: fromJSON(steps.check.outputs.validTag)
+        id: build_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          : Find Branch Build 🔎
+          if [[ "${RUNNER_DEBUG}" ]]; then set -x; fi
+
+          # Newest push run of this commit that isn't a tag run (i.e. the main/master/release branch build).
+          run_id="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow push.yaml --commit "${GITHUB_SHA}" \
+            --event push --limit 20 --json databaseId,headBranch \
+            --jq "[.[] | select(.headBranch != \"${GITHUB_REF_NAME}\")][0].databaseId // empty")"
+
+          if [[ -z "${run_id}" ]]; then
+            echo "::error::No branch build found for ${GITHUB_SHA}. Push this commit to main and let it build before tagging it."
+            exit 1
+          fi
+
+          echo "Using packages from run ${run_id}"
+          # If the branch build is still running (commit and tag pushed together), wait for it.
+          gh run watch "${run_id}" --repo "${GITHUB_REPOSITORY}" --exit-status --interval 30 > /dev/null || {
+            echo "::error::Branch build ${run_id} did not succeed, so there are no packages to release."
+            exit 1
+          }
+          echo "runId=${run_id}" >> $GITHUB_OUTPUT
+
       - name: Download Build Artifacts 📥
         uses: actions/download-artifact@v4
         if: fromJSON(steps.check.outputs.validTag)
         id: download
+        with:
+          run-id: ${{ steps.build_run.outputs.runId }}
+          github-token: ${{ github.token }}
 
       - name: Rename Files 🏷️
         if: fromJSON(steps.check.outputs.validTag)
@@ -108,7 +155,7 @@ jobs:
           draft: true
           prerelease: ${{ fromJSON(steps.check.outputs.prerelease) }}
           tag_name: ${{ steps.check.outputs.version }}
-          name: ${{ needs.build-project.outputs.pluginName }} ${{ steps.check.outputs.version }}
+          name: ${{ steps.check.outputs.pluginName }} ${{ steps.check.outputs.version }}
           body_path: ${{ github.workspace }}/CHECKSUMS.txt
           files: |
             ${{ github.workspace }}/*.exe
