@@ -18,15 +18,8 @@ jobs:
     permissions:
       contents: read
 
-  # Tags don't rebuild: the release reuses the packages built by the branch push of the same commit.
-  build-project:
-    name: Build Project 🧱
-    if: github.ref_type != 'tag'
-    uses: ./.github/workflows/build-project.yaml
-    secrets: inherit
-    permissions:
-      contents: read
-
+  # Pushes don't build. Builds are started manually (Dispatch workflow), and a release tag
+  # publishes the packages from the manual build of the tagged commit.
   create-release:
     name: Create Release 🛫
     if: github.ref_type == 'tag'
@@ -72,29 +65,28 @@ jobs:
             exit 1
           fi
 
-      - name: Find Branch Build 🔎
+      - name: Find Manual Build 🔎
         if: fromJSON(steps.check.outputs.validTag)
         id: build_run
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          : Find Branch Build 🔎
+          : Find Manual Build 🔎
           if [[ "${RUNNER_DEBUG}" ]]; then set -x; fi
 
-          # Newest push run of this commit that isn't a tag run (i.e. the main/master/release branch build).
-          run_id="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow push.yaml --commit "${GITHUB_SHA}" \
-            --event push --limit 20 --json databaseId,headBranch \
-            --jq "[.[] | select(.headBranch != \"${GITHUB_REF_NAME}\")][0].databaseId // empty")"
+          # Newest manual (Dispatch workflow) build of the tagged commit.
+          run_id="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow dispatch.yaml --commit "${GITHUB_SHA}" \
+            --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
 
           if [[ -z "${run_id}" ]]; then
-            echo "::error::No branch build found for ${GITHUB_SHA}. Push this commit to main and let it build before tagging it."
+            echo "::error::No manual build found for ${GITHUB_SHA}. Run the Dispatch workflow (job: build) on this commit, then push the tag."
             exit 1
           fi
 
           echo "Using packages from run ${run_id}"
-          # If the branch build is still running (commit and tag pushed together), wait for it.
+          # If the manual build is still running, wait for it.
           gh run watch "${run_id}" --repo "${GITHUB_REPOSITORY}" --exit-status --interval 30 > /dev/null || {
-            echo "::error::Branch build ${run_id} did not succeed, so there are no packages to release."
+            echo "::error::Manual build ${run_id} did not succeed, so there are no packages to release."
             exit 1
           }
           echo "runId=${run_id}" >> $GITHUB_OUTPUT

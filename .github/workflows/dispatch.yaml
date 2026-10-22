@@ -1,5 +1,5 @@
 name: Dispatch
-run-name: Dispatched Repository Actions - ${{ inputs.job }} ⌛️
+run-name: Manual ${{ inputs.job }} of ${{ github.ref_name }} ⌛️
 on:
   workflow_dispatch:
     inputs:
