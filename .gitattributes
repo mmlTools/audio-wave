@@ -1,0 +1,8 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Shell/zsh scripts must keep LF endings even in Windows working copies
+build-aux/** text eol=lf
+.github/scripts/** text eol=lf
+*.sh text eol=lf
+*.zsh text eol=lf

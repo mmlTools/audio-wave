@@ -1,1 +1,5 @@
-.run-format.zsh
+#!/usr/bin/env zsh
+
+# Real wrapper instead of a symlink: symlinks turn into plain text files on Windows checkouts
+# (core.symlinks=false), which breaks the CI format checks.
+SCRIPT_HOME=${0:A:h} FORMATTER_NAME=swift exec zsh ${0:A:h}/.run-format.zsh "$@"

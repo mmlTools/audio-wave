@@ -11,6 +11,7 @@
 !/src
 !.clang-format
 !.gersemirc
+!.gitattributes
 !.gitignore
 !buildspec.json
 !CMakeLists.txt
